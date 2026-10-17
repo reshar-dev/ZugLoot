@@ -309,9 +309,11 @@ window is open, up to the player's SR allowance (one roll, or N rolls
 for N reservations of the item); over-rolls flagged, ties
 re-roll fresh. Exactly one roll at a time — closing its window ends it.
 Raider clients pop their roll window off the ML/RL's RAID_WARNING roll
-call ONLY (`MatchRollCall`: `Roll for X: /roll ...` dice line or full
-item link — Pysanka parity). Drop lists, winners, countdowns, stop
-lines, raid-roll numbering, bare names and non-ML senders never trigger.
+call ONLY (`MatchRollCall`: `Roll for <link>: /roll ...` dice line,
+plain Pysanka name, or bare full link — Pysanka/LootBlare parity).
+Drop lists, winners, countdowns, stop
+lines, raid-roll numbering, bare names and non-ML senders never trigger
+— links buried in those lines are ignored: only the roll-call shape pops.
 - **Loot window** (`LootWindow.lua`, raider-window style (220px dark
   frame, icon + quality-colored name rows, roll detail with header icon
   + two-column roll list) — always ours, never Blizzard's): on
@@ -488,7 +490,8 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
 - Every character name the addon renders — Sheet tab rollers/history,
   loot-window roll lists/award rows/`...` choices, award
   menu + confirm, winner banner, version grid + `/zl verlist`, drop-log
-  lines — shows in its Blizzard **class color** (Paladin pink etc.).
+  lines, AND group-chat lines (drop calls, roll calls, winners, sand) —
+  shows in its Blizzard **class color** (Paladin pink etc.).
 - Source order: the **live party/raid member list first** (raid roster,
   then party units + self), **fallback to the class stored on the SR sheet**
   at import (`sheet.players`, from raidres `character.class` / legacy `role`).
@@ -497,9 +500,15 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
   the spec is ignored. Case/abbreviation/file-name tolerant
   (`paladin`, `PALADIN`, `War` all resolve).
 - Display-only: stored data (sheet, history, `PLAYERS` broadcast line,
-  archive snapshots) keeps raw class strings, and **addon chat carries no
-  color codes** — result/kind lines print plain names. Pure + headless-safe
-  (nil-guarded roster APIs) with `tests/test_classcolors.lua` coverage.
+  archive snapshots) keeps raw class strings. Group-chat ITEM names are
+  FULL clickable links (`|cHEX|Hitem:id:...|h[Name]|h|r`): shift-clickable,
+  hover tooltip, quality-colored in every client. When no full link is
+  known (uncached item, bare id) the addon synthesizes one from name +
+  quality — never a bare `item:id`. The raider roll window pops ONLY on
+  the roll-call shape (`Roll for <link>...`); links buried in drop lists,
+  winner, or sand lines never trigger it. Pure + headless-safe
+  (nil-guarded roster APIs) with `tests/test_classcolors.lua` and
+  `tests/test_colors_in_chat.lua` coverage.
 
 ### 4.4 Members grid (`VersionGrid.lua`, Members tab)
 

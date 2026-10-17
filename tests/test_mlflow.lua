@@ -340,7 +340,9 @@ eq(LW.doAction(1001, "finish"), "finished", "finish after walk-back")
 ML.AwardChosen({ name = "Aaa", via = "winner" }, 1001)
 ok(SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "award after walk-back")
 
--- 11. Chat names the item, never a bare item:id.
+-- 11. Chat links the item, never a bare item:id. (Full links contain
+-- an "item:<id>" substring by shape — the check is for the bare
+-- fallback: a line that IS "item:1001" with no [Name] and no link.)
 resetHarness()
 LW.SetItems({ { itemID = 1001, link = "item:1001", name = "Dragonfang Blade" } }, "loot")
 printed = {}
@@ -351,7 +353,13 @@ LW.doAction(1001, "finish")
 ML.AwardChosen({ name = "Aaa", via = "winner" }, 1001)
 local leaked = nil
 for i = 1, #printed do
-  if string.find(printed[i], "item:1001", 1, true) then leaked = printed[i] break end
+  local line = tostring(printed[i])
+  if line == "item:1001"
+      or (string.find(line, "item:1001", 1, true)
+        and not string.find(line, "|Hitem:", 1, true)
+        and not string.find(line, "%[", 1, true)) then
+    leaked = printed[i] break
+  end
 end
 ok(leaked == nil, "no bare item:id in chat, got: " .. tostring(leaked))
 local sawNamed = false

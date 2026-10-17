@@ -740,7 +740,8 @@ function M.PlaceBarRows(f, rows, _barW)
 end
 
 -- Quality color helper: client GetItemQualityColor when present, else the
--- Z.Colors hex fallback (keeps headless RowText deterministic).
+-- classic quality hexes (keeps headless RowText AND built links correct).
+-- Unknown quality reads white, never grey (grey = poor = free loot).
 function M.QualityHex(q)
   if GetItemQualityColor then
     local r, g, b = GetItemQualityColor(q or 0)
@@ -749,6 +750,10 @@ function M.QualityHex(q)
         math.floor((r or 1) * 255), math.floor((g or 1) * 255), math.floor((b or 1) * 255))
     end
   end
+  local hexes = { "|cff9d9d9d", "|cffffffff", "|cff1eff00",
+    "|cff0070dd", "|cffa335ee", "|cffff8000" }
+  local i = tonumber(q)
+  if i ~= nil and hexes[i + 1] ~= nil then return hexes[i + 1] end
   return "|cFFFFFFFF"
 end
 

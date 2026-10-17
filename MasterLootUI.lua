@@ -18,6 +18,24 @@ Z.MasterLootUI = M
 M.roll = nil -- THE roll (or nil): { itemID, itemLink, mode, rolls, silent }
 M.lastRound = nil -- last FINISHED round stamp (see FinishRoll)
 
+-- Class-colored display name, shared by frames AND chat lines.
+local function PName(name)
+  if Z.ClassColors and Z.ClassColors.ColoredName then
+    return Z.ClassColors.ColoredName(name)
+  end
+  return tostring(name or "")
+end
+
+-- Chat-bound player name: class-colored ("|cHEXname|r"), plain when the
+-- class is unknown. Any existing "|c..name|r" wrap is stripped first so
+-- names never double-wrap; stored data stays raw by contract.
+local function ChatName(name)
+  local s = tostring(name or "")
+  local inner = string.match(s, "^|c%x%x%x%x%x%x%x%x(.+)|r$")
+  if inner then s = inner end
+  return PName(s)
+end
+
 -- The last FINISHED round, stamped by FinishRoll before the roll clears:
 -- { itemID, itemLink, mode, silent, invented, roster, n }. Lets the award
 -- window "Continue rolling": reopen intake on the same item with the
@@ -39,7 +57,7 @@ function M.BeginRoll(itemID, itemLink, mode, silent)
   local roll = { itemID = itemID, itemLink = itemLink, mode = mode,
     rolls = {}, silent = silent and true or false }
   M.roll = roll
-  local dispName = M.DisplayItemLink(itemID, itemLink)
+  local dispName = M.ChatItem(itemID, itemLink)
   local label = dispName
   if mode == "RAIDROLL" then label = "Raid rolling " .. dispName .. "..." end
   if Z.Comm and Z.Comm.WarnGroup then
@@ -116,10 +134,12 @@ function M.StartRaidRoll(itemID)
   if not roll then return end
   roll.roster = roster -- frozen: leavers/joiners mid-roll change nothing
   roll.n = Z.Util.ArrayCount(roster)
-  -- Numbered raid, chunked so no chat line exceeds limits.
+  -- Numbered raid, chunked so no chat line exceeds limits. Names are
+  -- class-colored; the chunk math measures the COLORED bit (color codes
+  -- count against the 255-byte chat line too).
   local buf = ""
   for i = 1, Z.Util.ArrayCount(roster) do
-    local bit = "[" .. i .. "]:" .. roster[i]
+    local bit = "[" .. i .. "]:" .. ChatName(roster[i])
     if buf == "" then buf = bit
     elseif string.len(buf) + string.len(bit) + 2 > 200 then
       if Z.Comm and Z.Comm.SayGroup then Z.Comm.SayGroup(buf) else Z.Print(buf) end
@@ -464,28 +484,10 @@ function M.FinishRoll(itemID)
   return "finished"
 end
 
--- Class-colored display name. Chat-bound lines stay PLAIN (no color
--- codes in addon chat), everything rendered in a frame/text UI is colored.
-local function PName(name)
-  if Z.ClassColors and Z.ClassColors.ColoredName then
-    return Z.ClassColors.ColoredName(name)
-  end
-  return tostring(name or "")
-end
-
--- Chat carries no color codes: strip any "|c..name|r" wrap the resolver
--- may hand back (defensive; stored data is raw by contract).
-local function ChatName(name)
-  local s = tostring(name or "")
-  local inner = string.match(s, "^|c%x%x%x%x%x%x%x%x(.+)|r$")
-  if inner then return inner end
-  return s
-end
-
 -- One line per finished roll: who won (or tie / no winner). The window
 -- already shows every roll with its kind — chat gets the verdict only.
 function M.AnnounceResult(roll, res)
-  local itemTxt = M.DisplayItemLink(roll.itemID, roll.itemLink)
+  local itemTxt = M.ChatItem(roll.itemID, roll.itemLink)
   local winners = res.winners or {}
   if Z.Util.ArrayCount(winners) > 0 then
     local w = {}
@@ -726,6 +728,77 @@ function M.DisplayItemLink(itemID, itemLink)
   end
   if link ~= "" then return link end
   return "item:" .. tostring(itemID)
+end
+
+-- Chat-bound item: the FULL clickable link ("|cHEX|Hitem:id:...|h[Name]|h|r").
+-- Shift-clickable, hover tooltip, quality-colored in every client —
+-- including non-ZugLoot ones. Source order: the passed link when already
+-- full, the loot-window row link (scan-time GetLootSlotLink is always
+-- full), the client cache via ResolveItemInfo, else a synthesized
+-- BuildLink from name + quality (RollFor parity). Last resort: the plain
+-- colored name — never a bare item:id.
+function M.ChatItem(itemID, itemLink, quality)
+  local name = M.DisplayItemLink(itemID, itemLink)
+  local link = tostring(itemLink or "")
+  if string.find(link, "|Hitem:", 1, true) == nil then link = "" end
+  if link == "" and Z.LootWindow then
+    if Z.LootWindow.Find then
+      local row = Z.LootWindow.Find(itemID)
+      if row and string.find(tostring(row.link or ""), "|Hitem:", 1, true) then
+        link = row.link
+      end
+    end
+    if link == "" and Z.LootWindow.ResolveItemInfo
+        and name ~= "" and name ~= ("item:" .. tostring(itemID)) then
+      local _, full = Z.LootWindow.ResolveItemInfo(itemID, itemLink, quality, nil, name)
+      if string.find(tostring(full or ""), "|Hitem:", 1, true) then link = full end
+    end
+  end
+  if link ~= "" then return link end
+  -- No full link anywhere (uncached item, bare id): synthesize a REAL
+  -- clickable link from the name + quality (RollFor parity) so the line
+  -- still shift-clicks/tooltips. Never a bare item:id.
+  -- Quality order: the loot-window row is authoritative (scan-time slot
+  -- quality + list input), the explicit arg next, then cache, then
+  -- sheet. A cold/incorrect cache entry must never repaint the link.
+  local q = nil
+  if Z.LootWindow and Z.LootWindow.Find then
+    local row = Z.LootWindow.Find(itemID)
+    if row then q = tonumber(row.quality) end
+  end
+  if (q == nil or q == 0) and tonumber(quality) then q = tonumber(quality) end
+  if q == nil and GetItemInfo then
+    local _, _, qq = GetItemInfo(tonumber(itemID))
+    q = qq
+  end
+  if q == nil and Z.DB and Z.DB.sheet and Z.DB.sheet.items then
+    local it = Z.DB.sheet.items[itemID]
+    if it then q = tonumber(it.quality) end
+  end
+  if Z.LootWindow and Z.LootWindow.BuildLink
+      and name ~= "" and name ~= ("item:" .. tostring(itemID)) then
+    local built = Z.LootWindow.BuildLink(itemID, name, q)
+    if built then return built end
+  end
+  return M.QualityColor(q) .. tostring(name) .. "|r"
+end
+
+-- "|cHEX" for a quality number: client colors when present, else the
+-- classic quality hexes (keeps headless/tests deterministic). Unknown
+-- quality reads white, never grey (grey = poor = free loot).
+function M.QualityColor(q)
+  if GetItemQualityColor then
+    local r, g, b = GetItemQualityColor(tonumber(q) or 0)
+    if r then
+      return string.format("|cFF%02X%02X%02X",
+        math.floor((r or 1) * 255), math.floor((g or 1) * 255), math.floor((b or 1) * 255))
+    end
+  end
+  local hexes = { "|cff9d9d9d", "|cffffffff", "|cff1eff00",
+    "|cff0070dd", "|cffa335ee", "|cffff8000" }
+  local i = tonumber(q)
+  if i ~= nil and hexes[i + 1] ~= nil then return hexes[i + 1] end
+  return "|cffffffff"
 end
 
 -- Loot one corpse slot through Blizzard's loot frame (nil-safe: no-ops
@@ -1142,7 +1215,7 @@ function M.Award(itemID, winnerName, source, invented)
   end
   if Z.Comm then Z.Comm.BroadcastAward(itemID, winnerName) end
   if Z.DropLog then Z.DropLog.Add(itemID, link, source, "award", winnerName) end
-  local disp = M.DisplayItemLink(itemID, link)
+  local disp = M.ChatItem(itemID, link)
   if Z.Comm and Z.Comm.SayGroup and source ~= "sim" then
     Z.Comm.SayGroup(ChatName(winnerName) .. " wins " .. tostring(disp) .. ".")
   else
@@ -1357,7 +1430,7 @@ function M.Ignore(itemID, source)
   end
   source = source or "raid"
   if Z.DropLog then Z.DropLog.Add(itemID, link, source, "ignored", nil) end
-  local disp = M.DisplayItemLink(itemID, link)
+  local disp = M.ChatItem(itemID, link)
   Z.Print("Ignored " .. disp .. " (left on the corpse).")
   if Z.LootWindow and Z.LootWindow.MarkIgnored then
     Z.LootWindow.MarkIgnored(itemID)
@@ -1499,8 +1572,8 @@ function M.SandDistribute(itemID, source)
   source = source or "raid"
   ledger[winnerName] = M.SandTotal(ledger, winnerName) + qty
   if Z.DropLog then Z.DropLog.Add(itemID, link, source, "sand", winnerName) end
-  local disp = M.DisplayItemLink(itemID, link)
-  local line = "Sand x" .. tostring(qty) .. " -> " .. tostring(winnerName)
+  local disp = M.ChatItem(itemID, link)
+  local line = "Sand x" .. tostring(qty) .. " -> " .. ChatName(winnerName)
     .. " (" .. tostring(ledger[winnerName]) .. " total)"
   if Z.Comm and Z.Comm.SayGroup and source ~= "sim" then
     Z.Comm.SayGroup(line .. " [" .. tostring(disp) .. "]")
@@ -1997,8 +2070,8 @@ function M.OnLootOpened()
     return -- corpse unreadable/empty: nothing to cover, stay out of the way
   end
   -- Pysanka-style drop call (raid-roll parity): mob name + count, then
-  -- one numbered line per roll item. Plain item names (never links —
-  -- links in raid chat render for us but spam other clients' logs).
+  -- one numbered line per roll item. Full clickable item links —
+  -- shift-clickable, hover tooltip, quality-colored in every client.
   -- Target pins below; read the name NOW (re-targeting later loses it).
   local mobName = nil
   if UnitName then
@@ -2011,12 +2084,7 @@ function M.OnLootOpened()
       .. " item" .. (Z.Util.ArrayCount(found) == 1 and ":" or "s:"))
     for i = 1, Z.Util.ArrayCount(found) do
       local f = found[i]
-      local nm = f.link
-      if Z.LootWindow and Z.LootWindow.DisplayName then
-        nm = Z.LootWindow.DisplayName({ link = f.link, name = f.name,
-          itemID = Z.Util.ItemID(f.link) })
-      end
-      Z.Comm.WarnGroup(i .. ". " .. tostring(nm))
+      Z.Comm.WarnGroup(i .. ". " .. M.ChatItem(Z.Util.ItemID(f.link), f.link, f.quality))
     end
   end
   for i = 1, Z.Util.ArrayCount(found) do

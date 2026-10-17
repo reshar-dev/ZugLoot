@@ -672,15 +672,31 @@ assert(Z.ClassColors.ClassOf("Thrall") == "Paladin", "roll window sheet class");
 assert(Z.ClassColors.ColoredName("Thrall") == "|cFFF58CBAThrall|r", "roll window pink");
 Z.RaiderLootUI.ShowResult("The winner is Jaina (50) !");
 -- Pysanka-style roll calls pop the raider window ONLY on the actual
--- roll call ("Roll for X: ..." dice line, full link). Everything else
--- Pysanka says — drop lists, winners, countdowns, stop-rolls, raid-roll
--- numbering, bare item names, other senders — never pops it.
+-- roll call ("Roll for <link>: ..." dice line, plain name, bare link).
+-- Everything else Pysanka says — drop lists, winners, countdowns,
+-- stop-rolls, raid-roll numbering, bare item names, other senders —
+-- never pops it, even when those lines carry links.
 GetLootMethod = function() return "master" end;
 GetLootMaster = function() return "Pysanka" end;
 GetNumRaidMembers = function() return 3 end;
 Z.RaiderLootUI.Hide();
 Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "Roll for Nemesis Gloves: /roll (MS) or /roll 99 (OS) or /roll 98 (TMOG)", "Pysanka");
 assert(Z.RaiderLootUI.itemNameText == "Nemesis Gloves", "dice line pops window with item, got: " .. tostring(Z.RaiderLootUI.itemNameText));
+-- Linked roll call (what the ML actually sends now) pops with the link.
+Z.RaiderLootUI.Hide();
+Z.RaiderLootUI.itemNameText = nil;
+Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "Roll for |cffa335ee|Hitem:17063:0:0:0|h[Thunderfury]|h|r: /roll (MS)", "Pysanka");
+assert(Z.RaiderLootUI.itemNameText == "Thunderfury", "linked dice line pops window, got: " .. tostring(Z.RaiderLootUI.itemNameText));
+assert(Z.RaiderLootUI.itemLink ~= nil
+  and string.find(Z.RaiderLootUI.itemLink, "|Hitem:17063", 1, true) ~= nil,
+  "linked dice line keeps the clickable link, got: " .. tostring(Z.RaiderLootUI.itemLink));
+Z.RaiderLootUI.Hide();
+Z.RaiderLootUI.itemNameText = nil;
+-- Linked non-roll lines never pop: drop line + winner line.
+Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "1. |cff0070dd|Hitem:19137:0:0:0|h[Primal Hakkari Idol]|h|r", "Pysanka");
+assert(Z.RaiderLootUI.itemNameText == nil, "linked drop line does not pop window, got: " .. tostring(Z.RaiderLootUI.itemNameText));
+Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "|cFFF58CBAJaina|r wins |cffa335ee|Hitem:17063:0:0:0|h[Thunderfury]|h|r.", "Pysanka");
+assert(Z.RaiderLootUI.itemNameText == nil, "linked winner line does not pop window, got: " .. tostring(Z.RaiderLootUI.itemNameText));
 Z.RaiderLootUI.Hide();
 Z.RaiderLootUI.itemNameText = nil;
 Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "Nemesis Gloves", "Pysanka");

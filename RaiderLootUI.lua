@@ -92,6 +92,11 @@ local function SetItemInfo(link)
   local iconPath = "Interface\\Icons\\INV_Misc_QuestionMark"
   local name, quality = nil, nil
   if link then
+    -- A full link carries its own display name in [brackets]: prefer it.
+    -- The client cache answers for the LOCAL client's locale/item data
+    -- and can disagree (mock/test doubles famously return a generic
+    -- name); the link text is what the raid actually sees in chat.
+    local bracket = string.match(tostring(link), "%[(.-)%]")
     -- Sheet-style resolution via the shared link-first chain
     -- (GetItemInfo(link), then GetItemInfo(id), then [Name] parse): the
     -- bare-ID call alone misses whenever the cache key is the full link.
@@ -112,6 +117,7 @@ local function SetItemInfo(link)
         end
         if tex then iconPath = tex end
       end
+      if bracket and bracket ~= "" then name = bracket end
     elseif GetItemInfo then
       local id = string.match(tostring(link), "item:(%d+)")
       if id then
@@ -121,6 +127,7 @@ local function SetItemInfo(link)
           if tex then iconPath = tex end
         end
       end
+      if bracket and bracket ~= "" then name = bracket end
     end
     if not name then
       name = string.match(tostring(link), "%[(.-)%]")
@@ -399,9 +406,11 @@ end
 -- parity), the dice vote through RollOnLoot, CANCEL_LOOT_ROLL hides it.
 -- RollOnLoot is guarded: without it (headless) the dice are inert.
 M.groupRollID = nil
--- Roll-call matching: the ML's RW line for one item. Pysanka-style calls
--- are the plain item NAME ("Nemesis Gloves"), possibly with an (SR)-style
--- suffix and kind dice ("Roll for X: /roll (MS) or /roll 99 (OS) ...").
+-- Roll-call matching: the ML's RW line for one item. It carries the FULL
+-- clickable item link ("Roll for |cFF...|Hitem...|h[Name]|h|r: ...") —
+-- shift-clickable, hover tooltip, colored in every client. Matching takes
+-- the full link when the line IS a roll call; links buried in other shapes
+-- (drop lists, winner lines, sand lines) never match — see below.
 -- Pure helper (headless-testable): text + optional sender -> item text.
 -- Empty string = not a roll call (never pop the window on raid chatter).
 function M.MatchRollCall(text, sender)
@@ -415,17 +424,23 @@ function M.MatchRollCall(text, sender)
     local okLeader = Z.SRSecurity.IsLeader and Z.SRSecurity.IsLeader(sender)
     if not okLeader then return "" end
   end
-  -- Full item link anywhere in the line: the item, verbatim.
-  local link = string.match(t, "(|c%x+|Hitem.-|h%[.-%]|h|r)")
-  if link then return link end
-  -- "Roll for <item>[: ...]" — strip the kind-dice suffix. This is the
-  -- ONLY chat shape that opens the window (Pysanka's actual roll call).
-  local item = string.match(t, "^[Rr]oll for (.+)$")
+  -- "Roll for <item>[: ...]" ONLY: full link, colored name, or plain
+  -- Pysanka name, with the kind-dice suffix stripped. A full item link
+  -- ANYWHERE ELSE (numbered drop line, "X wins <link>.", sand line) is
+  -- not a roll call — no bare-link guessing, ever.
+  local plain = string.gsub(t, "|c%x%x%x%x%x%x%x%x(.-)|r", "%1")
+  local item = string.match(plain, "^[Rr]oll for (.+)$")
   if item then
     item = string.gsub(item, "%s*:%s*/roll.*$", "")
     item = string.gsub(item, "%s+%([Ss][Rr]%s*[^)]*%)%s*$", "")
     item = Z.Util.Trim(item)
-    if item ~= "" then return item end
+    if item ~= "" then
+      -- Prefer the full link: the window, tooltip, and shift-click all
+      -- want the clickable form, not the stripped name.
+      local link = string.match(t, "(|c%x+|Hitem.-|h%[.-%]|h|r)")
+      if link then return link end
+      return item
+    end
   end
   -- Everything else (drop lists, winners, countdowns, stop-rolls,
   -- raid-roll numbering, plain chatter) NEVER opens the window — no
@@ -435,8 +450,8 @@ end
 
 function M.OnEvent(event, a1, a2)
   if event == "CHAT_MSG_RAID_WARNING" then
-    -- ML/RL roll call in RW (Pysanka style): plain item name, "Roll for
-    -- X: ..." dice line, or full link (LootBlare trigger). Verify sender.
+    -- ML/RL roll call in RW: "Roll for <link>..." dice line (or plain
+    -- Pysanka name / LootBlare bare link). Verify sender.
     local item = M.MatchRollCall(a1, a2)
     if item ~= "" then
       M.ShowItem(item, (Z.DB and Z.DB.rollTime) or 15)
