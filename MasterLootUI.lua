@@ -61,10 +61,20 @@ end
 -- Start the one roll. Refuses when a roll is already open (finish,
 -- award, or close it first). silent=true skips the addon-message
 -- broadcast (sim must not pop other clients' roller windows).
+--
+-- LOOT-METHOD GUARD (issue #18): the method is frozen on the roll at
+-- start (roll.method via CurrentLootMethod). If the party/raid leader
+-- flips the loot method mid-roll, continuing would strand items:
+-- master-loot handoffs fail under group loot and group takes fail
+-- under master loot, with winners remembered but nothing moving.
+-- Intake pauses (warns once) and Award refuses until the method is
+-- restored or the roll is cancelled — the row and won state stay
+-- intact either way.
 function M.BeginRoll(itemID, itemLink, mode, silent)
   if M.roll then return nil end
   local roll = { itemID = itemID, itemLink = itemLink, mode = mode,
-    rolls = {}, silent = silent and true or false }
+    rolls = {}, silent = silent and true or false,
+    method = M.CurrentLootMethod() }
   M.roll = roll
   -- Roll-start line: ONE format for sim and live ("Roll <Item> — SR/MS
   -- 1-100, roll now!"; raid-roll keeps its own "Raid rolling ...").
@@ -236,9 +246,21 @@ end
 -- Chat intake. Rolls land on THE roll while its window is open --
 -- fake or real, no difference. Window closed (M.roll nil) = no intake.
 -- "Name rolls 42 (1-100)" -> player, roll, minR, maxR.
+-- Loot-method guard (issue #18): rolls landing after a mid-roll method
+-- change are parked, not judged — the ranges/handling may belong to a
+-- different loot mode. Warns once per roll (roll.methodWarned), then
+-- stays quiet until the method is restored or the roll ends.
 function M.IntakeChatRoll(line)
   local roll = M.roll
   if not roll then return end
+  if M.LootMethodChanged(roll) then
+    if not roll.methodWarned then
+      roll.methodWarned = true
+      Z.Print("Loot method changed mid-roll — rolls paused. Restore "
+        .. tostring(roll.method or "?") .. " loot or cancel the roll.")
+    end
+    return
+  end
   local player, rv, minR, maxR =
     string.match(tostring(line or ""), "(.+) rolls (%d+) %((%d+)%-(%d+)%)")
   if not player then return end
@@ -1317,6 +1339,25 @@ function M.Award(itemID, winnerName, source, tradeTo)
     Z.Print("Pick a recipient first.")
     return
   end
+  -- Loot-method guard (issue #18) FIRST — before EndRoll: a refused
+  -- award must leave the open roll (and its landed rolls) alive, so
+  -- restoring the method resumes the same roll. Frozen source: the
+  -- open roll for this item (BeginRoll stamps method), else the row's
+  -- scan-time stamp (OnLootOpened stamps method). No stamp anywhere:
+  -- nothing to compare, never refuse. Sim rows never trip.
+  if source ~= "sim" then
+    local frozen = nil
+    local rowEarly = Z.LootWindow and Z.LootWindow.Find(itemID) or nil
+    if M.roll and M.roll.itemID == itemID and M.roll.method ~= nil then
+      frozen = M.roll
+    elseif rowEarly and rowEarly.lootMethod ~= nil then
+      frozen = { method = rowEarly.lootMethod, mode = "SR" }
+    end
+    if frozen and M.LootMethodChanged(frozen) then
+      Z.Print(M.LootMethodChangedMessage(frozen))
+      return false
+    end
+  end
   M.EndRoll(itemID)
   -- Awarded = gone: no finished round left to continue on this item.
   if M.lastRound and M.lastRound.itemID == itemID then M.lastRound = nil end
@@ -1465,6 +1506,30 @@ function M.CurrentLootMethod()
     if ok then return m end
   end
   return nil
+end
+
+-- Loot-method guard core (issue #18): true when the live loot method
+-- differs from the one frozen on the roll at BeginRoll. Sim rolls
+-- (mode SIM) never consult the method — headless/test flows have no
+-- loot API and must not trip the guard. A roll with no frozen method
+-- (unknown at start) likewise never trips: refusing on "nil -> nil"
+-- noise would strand awards where there is nothing to protect.
+-- Pure shape: explicit method pair, headless-testable.
+function M.LootMethodChanged(roll)
+  if not roll or roll.mode == "SIM" then return false end
+  local frozen = roll.method
+  if frozen == nil then return false end
+  return M.CurrentLootMethod() ~= frozen
+end
+-- Refusal line for a method-changed award: names both sides so the ML
+-- knows exactly what to restore. Pure, headless-testable.
+function M.LootMethodChangedMessage(roll)
+  local want = (roll and roll.method) or "?"
+  local have = M.CurrentLootMethod()
+  return "Loot method changed (was " .. tostring(want)
+    .. ", now " .. tostring(have)
+    .. "). Restore " .. tostring(want)
+    .. " loot or cancel the roll — the item stays listed."
 end
 
 -- Boss threshold (Setup dropdown): the loot threshold applied with the
@@ -1721,6 +1786,20 @@ function M.SandDistribute(itemID, source)
     Z.Print("Not distributing sand to " .. ChatName(winnerName)
       .. ": no loot open. Loot the corpse again, then distribute.")
     return false
+  end
+  -- Loot-method guard (issue #18): same refusal as Award — a handoff
+  -- under the wrong method fails silently. Row kept, ledger untouched.
+  if source ~= "sim" then
+    local frozen = nil
+    if M.roll and M.roll.itemID == itemID and M.roll.method ~= nil then
+      frozen = M.roll
+    elseif row0 and row0.lootMethod ~= nil then
+      frozen = { method = row0.lootMethod, mode = "SR" }
+    end
+    if frozen and M.LootMethodChanged(frozen) then
+      Z.Print(M.LootMethodChangedMessage(frozen))
+      return false
+    end
   end
   if source ~= "sim" and row0 and row0.slot ~= nil
       and GetNumLootItems and GetLootSlotLink then
@@ -2311,14 +2390,20 @@ function M.OnLootOpened()
   -- items (Blizzard's Need/Greed owns those) after, free leftovers last.
   -- The ML works each roll row from the list; coin/free rows loot on
   -- click; group rows are display-only until Blizzard's roll resolves.
+  -- Loot-method guard (issue #18): stamp the live method on every row
+  -- so a mid-session flip is detectable at award time (Award refuses,
+  -- row kept, no won mark) instead of stranding items with winners
+  -- remembered but nothing moved.
   if Z.LootWindow then
     local rows = {}
+    local scanMethod = M.CurrentLootMethod()
     local function push(e, badge)
       table.insert(rows, { itemID = e.itemID, link = e.link,
         name = e.name, texture = e.texture,
         quality = e.quality, quantity = e.quantity,
         slot = e.slot, badge = badge or "", coin = e.coin,
-        free = e.free, group = e.group })
+        free = e.free, group = e.group,
+        lootMethod = scanMethod })
     end
     for i = 1, Z.Util.ArrayCount(coin) do push(coin[i]) end
     for i = 1, Z.Util.ArrayCount(found) do

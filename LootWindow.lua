@@ -204,6 +204,9 @@ function M.SetItems(list, source)
         status = "open",
         ignored = false,
         source = source or "loot",
+        -- Loot-method guard (issue #18): scan-time method stamp,
+        -- passed through so Award can detect a mid-session flip.
+        lootMethod = e.lootMethod,
       }
       M.EnsureResolved(row) -- sheet-style name/icon/link, not "item:<id>"
       table.insert(M.items, row)
