@@ -877,6 +877,108 @@ liveMethod = "group"
 eq(LW.doAction(1001, "raidroll"), "roll failed", "raidroll refuses while frozen")
 ok(ML.roll ~= nil and #ML.roll.rolls == 1, "open roll survives raid-roll refusal")
 eq(LW.detail.phase, "rolling", "rolling view kept")
+-- 17. Issue #19: repeated raid-rolls don't re-spam the numbered roster.
+-- Same roster within 5 min skips the "[i]:Name" list (only the
+-- "Raid rolling <link>..." line goes out); a changed roster or a
+-- stale cache re-broadcasts the full list.
+-- Pure policy first: checksum + window, no clock needed.
+eq(ML.RosterChecksum({ "A", "B", "C" }), "A\001B\001C", "checksum joins names")
+eq(ML.RosterChecksum(nil), "", "nil roster checksums empty")
+eq(ML.RosterChecksum({}), "", "empty roster checksums empty")
+ok(ML.ShouldBroadcastRoster("A", 1000, nil), "first raid-roll broadcasts")
+ok(not ML.ShouldBroadcastRoster("A", 1000, { checksum = "A", at = 1000 }), "same roster, fresh: skip")
+ok(not ML.ShouldBroadcastRoster("A", 1299, { checksum = "A", at = 1000 }), "same roster within 5 min: skip")
+ok(ML.ShouldBroadcastRoster("A", 1300, { checksum = "A", at = 1000 }), "same roster after 5 min: broadcast")
+ok(ML.ShouldBroadcastRoster("B", 1001, { checksum = "A", at = 1000 }), "roster changed: broadcast")
+-- End to end: two raid-rolls back to back, second skips the numbering.
+resetHarness()
+grouping = "raid"
+GetNumRaidMembers = function() return 3 end
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Bluefelon" })[i]
+end
+UnitName = function(u)
+  if u == "player" then return "Pysanka" end
+  return "Pysanka"
+end
+GetTime = function() return 1000 end
+RandomRoll = function() end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.lastRaidRollCast = nil
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "first raid-roll starts")
+local numbered1 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered1 = numbered1 + 1 end
+end
+ok(numbered1 > 0, "first raid-roll broadcasts the numbered roster")
+ML.roll = nil -- roll over (test drives the broadcast, not the intake)
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "second raid-roll starts")
+local numbered2, startSeen = 0, false
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered2 = numbered2 + 1 end
+  if string.find(sent[i].msg, "Raid rolling", 1, true) then startSeen = true end
+end
+eq(numbered2, 0, "repeat raid-roll skips the numbered roster")
+ok(startSeen, "repeat raid-roll still announces the item")
+-- Roster change re-broadcasts the full list.
+ML.roll = nil
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Newbie" })[i]
+end
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "changed-roster raid-roll starts")
+local numbered3 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered3 = numbered3 + 1 end
+end
+ok(numbered3 > 0, "changed roster re-broadcasts the numbered list")
+-- Stale cache (5+ min) re-broadcasts too.
+ML.roll = nil
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Newbie" })[i]
+end
+GetTime = function() return 1000 + 301 end
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "stale-cache raid-roll starts")
+local numbered4 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered4 = numbered4 + 1 end
+end
+ok(numbered4 > 0, "stale cache re-broadcasts the numbered list")
+GetNumRaidMembers = function() return 0 end
+GetRaidRosterInfo = function() return nil end
+UnitName = function() return "SoloPlayer" end
+GetTime = nil
+RandomRoll = function() end
+
+-- 17. Issue #17: sub-threshold auto-loot row selection. Free rows +
+-- coin with a corpse slot are taken; group-roll rows (Blizzard owns
+-- them), ignored rows, and slotless rows are never touched.
+local freeRows = ML.FreeRowsForAutoLoot({
+  { itemID = 1, slot = 1, free = true },
+  { itemID = "Coin", slot = 2, coin = true },
+  { itemID = 3, slot = 3, free = true, group = true },
+  { itemID = 4, slot = 4, free = true, ignored = true },
+  { itemID = 5, free = true }, -- no slot: nothing to take
+  { itemID = 6, slot = 6 }, -- roll row, not free
+})
+eq(#freeRows, 2, "only free + coin selected")
+eq(freeRows[1].itemID, 1, "free row taken")
+eq(freeRows[2].itemID, "Coin", "coin taken")
+eq(#ML.FreeRowsForAutoLoot(nil), 0, "nil-safe")
+eq(#ML.FreeRowsForAutoLoot({}), 0, "empty-safe")
+-- Gated: option off or no corpse open takes nothing.
+ZugLoot.DB.autoLootBelow = false
+ML.lootOpen = true
+eq(ML.AutoLootFree(), 0, "option off takes nothing")
+ZugLoot.DB.autoLootBelow = true
+ML.lootOpen = false
+eq(ML.AutoLootFree(), 0, "closed corpse takes nothing")
+ZugLoot.DB.autoLootBelow = nil
 GetLootMethod = nil
 GetMasterLootCandidate = nil
 ZugLoot.SRSecurity.LootMethod = nil

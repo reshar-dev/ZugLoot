@@ -173,6 +173,50 @@ end
 -- in range 1-N counts (everyone else's chat rolls are ignored); the
 -- number indexes the frozen roster. Finish distributes at once
 -- (the item goes straight out, no award window).
+--
+-- SPAM GATE (issue #19): the numbered roster is chat-heavy (one line per
+-- ~8 raiders). Repeating it for every raid-rolled item floods the
+-- channel, so the broadcast is cached: same roster shape (checksum)
+-- within 5 minutes reuses the last broadcast silently — only the
+-- "Raid rolling <link>..." line goes out, the numbering is skipped.
+-- A changed roster (join/leave) or a stale cache re-broadcasts the
+-- full list. Pure helpers below (RosterChecksum, ShouldBroadcastRoster)
+-- so tests pin the policy without a clock.
+M.RAIDROLL_BROADCAST_WINDOW = 300
+M.lastRaidRollCast = nil -- { checksum, at }: last roster broadcast
+-- Stable checksum of a roster (ordered names): cheap string compare.
+-- Nil-safe: empty/nil roster checksums empty.
+function M.RosterChecksum(roster)
+  local parts = {}
+  for i = 1, Z.Util.ArrayCount(roster or {}) do
+    local nm = roster and roster[i] or nil
+    if nm and nm ~= "" then table.insert(parts, tostring(nm)) end
+  end
+  return table.concat(parts, "\001")
+end
+-- Now in seconds. Client GetTime when present (uptime seconds — the
+-- window is a duration, epoch-independent), else Lua time().
+function M.Now()
+  if GetTime then
+    local ok, t = pcall(GetTime)
+    if ok and type(t) == "number" then return t end
+  end
+  if time then
+    local ok, t = pcall(time)
+    if ok and type(t) == "number" then return t end
+  end
+  return 0
+end
+-- Should the numbered roster go out? True when the roster changed
+-- since the last broadcast or the window (5 min) lapsed.
+-- Pure: pass checksum + now + last cast explicitly.
+function M.ShouldBroadcastRoster(checksum, now, last)
+  checksum = tostring(checksum or "")
+  now = tonumber(now) or 0
+  if not last or last.checksum ~= checksum then return true end
+  local at = tonumber(last.at) or 0
+  return (now - at) >= M.RAIDROLL_BROADCAST_WINDOW
+end
 function M.StartRaidRoll(itemID)
   if not M.RequireML() then return end
   itemID = Z.Util.ItemID(itemID)
@@ -195,6 +239,12 @@ function M.StartRaidRoll(itemID)
   if not roll then return end
   roll.roster = roster -- frozen: leavers/joiners mid-roll change nothing
   roll.n = Z.Util.ArrayCount(roster)
+  -- Spam gate (issue #19): same roster within 5 min skips the numbered
+  -- list — "Raid rolling <link>..." (sent by BeginRoll) is enough.
+  local checksum = M.RosterChecksum(roster)
+  local broadcast = M.ShouldBroadcastRoster(checksum, M.Now(), M.lastRaidRollCast)
+  if broadcast then
+    M.lastRaidRollCast = { checksum = checksum, at = M.Now() }
   -- Numbered raid, chunked so no chat line exceeds limits.
   local buf = ""
   for i = 1, Z.Util.ArrayCount(roster) do
@@ -209,6 +259,7 @@ function M.StartRaidRoll(itemID)
   end
   if buf ~= "" then
     if Z.Comm and Z.Comm.SayGroup then Z.Comm.SayGroup(buf) else Z.Print(buf) end
+  end
   end
   -- The ML rolls 1-N: RandomRoll pops the standard roll frame AND the
   -- system message our intake reads (same as any /roll).
@@ -2461,8 +2512,51 @@ function M.OnLootOpened()
     for i = 1, Z.Util.ArrayCount(free) do push(free[i]) end
     Z.LootWindow.SetItems(rows, "loot")
     Z.LootWindow.Show("Boss loot")
+    -- Sub-threshold auto-loot (issue #17, Setup option, default OFF):
+    -- take free rows + coin straight off the corpse, no clicks needed.
+    -- Group-roll rows are NEVER touched (Blizzard's Need/Greed owns
+    -- them — auto-taking would steal the item out from under the roll).
+    -- Routing (master handoff vs plain LootSlot) + the BoP confirm run
+    -- through the shared LootCorpseSlot path; the takeover kill-switch
+    -- OFF means hands off entirely. Rows drop on LOOT_SLOT_CLEARED.
+    M.AutoLootFree()
   end
   Z.Print("Loot window open — click a row, then Award / ... / Close.")
+end
+
+-- Take every free row + coin off the open corpse (sub-threshold
+-- auto-loot). Pure selection via FreeRowsForAutoLoot; guarded here:
+-- option on, corpse open, takeover armed, winner = self.
+function M.AutoLootFree()
+  if not (Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow()) then return 0 end
+  if not M.lootOpen then return 0 end
+  if Z.LootWindow and Z.LootWindow.TakeoverWanted and not Z.LootWindow.TakeoverWanted() then return 0 end
+  local me = nil
+  if UnitName then local ok, nm = pcall(UnitName, "player") if ok then me = nm end end
+  if not me or me == "" then return 0 end
+  local rows = M.FreeRowsForAutoLoot(Z.LootWindow and Z.LootWindow.items)
+  local n = 0
+  for i = 1, Z.Util.ArrayCount(rows) do
+    local r = rows[i]
+    if r and r.slot and M.LootCorpseSlot then
+      local ok = M.LootCorpseSlot(r.link or ("item:" .. tostring(r.itemID)), r.itemID, me, r.slot)
+      if ok == true then n = n + 1 end
+    end
+  end
+  return n
+end
+-- Selectable auto-loot rows: free rows + coin with a tracked corpse
+-- slot. Group-roll rows excluded (Blizzard owns them), ignored rows
+-- excluded (manual handling). Pure, headless-testable.
+function M.FreeRowsForAutoLoot(items)
+  local out = {}
+  for i = 1, Z.Util.ArrayCount(items or {}) do
+    local it = (items or {})[i]
+    if it and it.slot and not it.ignored and not it.group and (it.free or it.coin) then
+      table.insert(out, it)
+    end
+  end
+  return out
 end
 
 function M.OnEvent(event, a1, _a2)

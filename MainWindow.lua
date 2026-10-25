@@ -1367,7 +1367,7 @@ function M.RenderSetup()
   ClearBody(key)
   local b = bodies[key]
   local row = CreateFrame("Frame", nil, b.child)
-  row:SetWidth(BODY_WIDTH) row:SetHeight(200)
+  row:SetWidth(BODY_WIDTH) row:SetHeight(340)
   local t = FS(row, "GameFontNormalLarge", "Import & options")
   t:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
   local sub = FS(row, "GameFontHighlightSmall", "Role: " .. Z.SRSecurity.RoleLabel() .. " — only the master looter may broadcast sheets.")
@@ -1484,18 +1484,71 @@ function M.RenderSetup()
   end)
   Tip(b11, "Roll window", "When the raider roll window pops: master-loot rolls only (ML), or every roll (ALL).",
     "Default ML: group loot stays in Blizzard's Need/Greed frames, solo stays shut.")
+  -- LazyPig-style auto-need (issue #17): per-category group-roll votes
+  -- for raid trash (ZG coins/bijous, MC mats, AQ scarabs/idols, sand,
+  -- dream shards, Naxx scraps). Each button cycles OFF -> NEED ->
+  -- GREED -> PASS; silent background votes, no chat, no window.
+  -- Plus sub-threshold corpse auto-loot (free rows + coin, no clicks).
+  local nzHead = FS(row, "GameFontNormal", "Auto-need (group-roll trash)")
+  nzHead:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -190)
+  local nzBtns = {}
+  local cats = (Z.AutoRoll and Z.AutoRoll.CATEGORIES) or {}
+  for i = 1, Z.Util.ArrayCount(cats) do
+    local cat = cats[i] -- fresh local per iteration for the closure
+    local nb = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    nb:SetWidth(150) nb:SetHeight(20)
+    local col = math.mod(i - 1, 2)
+    local rrow = math.floor((i - 1) / 2)
+    nb:SetPoint("TOPLEFT", row, "TOPLEFT", 4 + col * 158, -208 - rrow * 24)
+    local function nzLabel()
+      local v = Z.AutoRoll and Z.AutoRoll.VoteFor and Z.AutoRoll.VoteFor(cat) or nil
+      local lab = Z.AutoRoll and Z.AutoRoll.VoteLabel and Z.AutoRoll.VoteLabel(v) or "OFF"
+      local short = Z.AutoRoll and Z.AutoRoll.CATEGORY_LABEL and Z.AutoRoll.CATEGORY_LABEL[cat] or cat
+      return tostring(short) .. ": " .. tostring(lab)
+    end
+    nb:SetText(nzLabel())
+    nb:SetScript("OnClick", function()
+      if Z.AutoRoll and Z.AutoRoll.Cycle then Z.AutoRoll.Cycle(cat) end
+      nb:SetText(nzLabel())
+    end)
+    local catTip = (Z.AutoRoll and Z.AutoRoll.CATEGORY_LABEL and Z.AutoRoll.CATEGORY_LABEL[cat]) or cat
+    Tip(nb, "Auto " .. catTip, "Group-roll vote for " .. catTip .. ".",
+      "OFF: no vote. NEED/GREED/PASS: silent background vote, no chat spam.")
+    nzBtns[cat] = nb
+  end
+  local b12 = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+  b12:SetWidth(150) b12:SetHeight(20)
+  b12:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -208 - 3 * 24 - 4)
+  local function alLabel()
+    if Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow() then
+      return "Auto-loot below: ON"
+    end
+    return "Auto-loot below: OFF"
+  end
+  b12:SetText(alLabel())
+  b12:SetScript("OnClick", function()
+    if Z.AutoRoll and Z.AutoRoll.SetAutoLootBelow then
+      local cur = Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow()
+      Z.AutoRoll.SetAutoLootBelow(not cur)
+    end
+    b12:SetText(alLabel())
+  end)
+  Tip(b12, "Auto-loot below threshold", "Take below-threshold corpse loot (free rows + coin) automatically, no clicks.",
+    "Group-roll items are never touched — Blizzard's Need/Greed owns those.")
   M.setupBtns = M.setupBtns or {}
   M.setupBtns.mlOnBoss = b8
   M.setupBtns.backToGroup = b9
   M.setupBtns.bossThreshold = b10
   M.setupBtns.raiderFrame = b11
+  M.setupBtns.autoNeed = nzBtns
+  M.setupBtns.autoLootBelow = b12
   local info = FS(row, "GameFontHighlightSmall",
     "Roll time: " .. tostring(Z.DB and Z.DB.rollTime or 15) .. "s  (/zl time N)\n" ..
     "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)\n" ..
     "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl simraid <raid>")
   info:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -148)
   info:SetWidth(BODY_WIDTH - 16) info:SetJustifyH("LEFT")
-  TrackRow(key, row, 264)
+  TrackRow(key, row, 308)
 end
 
 -------------------------------------------------------------------------------
@@ -1662,11 +1715,15 @@ function M.DebugHeaderButtons()
 end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
--- switching pair. Returns { mlOnBoss, backToGroup } (nil before first
--- Setup render).
+-- switching pair + the boss-threshold dropdown button + the raider-frame
+-- policy button + the auto-need category buttons + the sub-threshold
+-- auto-loot button. Returns { mlOnBoss, backToGroup, bossThreshold,
+-- raiderFrame, autoNeed, autoLootBelow } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
-  return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup }
+  return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
+    bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
+    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow }
 end
 -- Boss-threshold dropdown (Setup tab): one row per threshold
 -- (Common 1 .. Epic 4). Picking stores the preference via
@@ -1751,12 +1808,14 @@ end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the raider-frame
--- policy button. Returns { mlOnBoss, backToGroup, bossThreshold,
--- raiderFrame } (nil before first Setup render).
+-- policy button + the auto-need category buttons + the sub-threshold
+-- auto-loot button. Returns { mlOnBoss, backToGroup, bossThreshold,
+-- raiderFrame, autoNeed, autoLootBelow } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
-    bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame }
+    bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
+    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow }
 end
 
 function M.Build()
