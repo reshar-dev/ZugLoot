@@ -787,11 +787,17 @@ function M.PlaceBarRows(f, rows, _barW)
   return Z.Util.ArrayCount(rows)
 end
 
--- Quality color helper: client GetItemQualityColor when present, else the
--- Z.Colors hex fallback (keeps headless RowText deterministic).
+-- Quality color helper: client GetItemQualityColor when present.
+-- nil/zero quality is "unknown" (the list default for rows and the
+-- ChatQuality contract), never grey: white, honest. Headless (no client
+-- API) is white as well, which keeps the headless RowText deterministic.
+-- Single source of truth for every quality-colored name/link in the
+-- addon (loot rows, synthesized chat links, raider frame).
 function M.QualityHex(q)
+  q = tonumber(q)
+  if not q or q <= 0 then return "|cFFFFFFFF" end
   if GetItemQualityColor then
-    local r, g, b = GetItemQualityColor(q or 0)
+    local r, g, b = GetItemQualityColor(q)
     if r then
       return string.format("|cFF%02X%02X%02X",
         math.floor((r or 1) * 255), math.floor((g or 1) * 255), math.floor((b or 1) * 255))
