@@ -730,6 +730,153 @@ local awardOk = ML.Award(1001, "Aaa", "raid")
 eq(awardOk, false, "award returns false on handoff rejection")
 ok(LW.Find(1001) ~= nil, "item retained in loot window after failed award")
 ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "not marked won after failed award")
+-- 17. Issue #18: loot-method guard. A mid-session method change must
+-- refuse awards (row kept, no won mark, no corpse take) and pause
+-- intake — winners remembered for items that never move is the
+-- reported stuck state. Restoring the method resumes cleanly.
+-- Pure policy first.
+local liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+eq(ML.LootMethodChanged({ method = "master", mode = "SR" }), false, "same method: no trip")
+eq(ML.LootMethodChanged({ method = "master", mode = "SR" }) and false or true, true, "sanity")
+liveMethod = "group"
+ok(ML.LootMethodChanged({ method = "master", mode = "SR" }), "method flipped: trips")
+ok(not ML.LootMethodChanged({ method = "master", mode = "SIM" }), "SIM never trips")
+ok(not ML.LootMethodChanged({ mode = "SR" }), "no frozen method: never trips")
+ok(not ML.LootMethodChanged(nil), "nil roll: never trips")
+local msg = ML.LootMethodChangedMessage({ method = "master" })
+ok(string.find(msg, "master", 1, true) ~= nil and string.find(msg, "group", 1, true) ~= nil,
+  "message names both sides, got: " .. tostring(msg))
+-- End to end: award under a flipped method refuses, keeps row + won clean.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+grouping = "raid"
+GetLootMethod = function() return liveMethod end
+GetMasterLootCandidate = function(_slot, i)
+  if i == 1 then return "Aaa" end
+  if i == 2 then return "Bbb" end
+end
+GiveMasterLoot = function() return true end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+ok(LW.Find(1001) ~= nil, "item initially in loot window")
+eq(LW.Find(1001).lootMethod, "master", "scan stamps the live method")
+-- Method flips mid-session (party leader changes it): roll starts
+-- under master, THEN the flip happens.
+eq(LW.doAction(1001, "roll"), "rolling", "roll starts under master")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+eq(#ML.roll.rolls, 1, "roll lands before the flip")
+liveMethod = "group"
+ML.IntakeChatRoll("Bbb rolls 80 (1-100)") -- after the flip: parked
+ok(ML.roll.methodWarned, "intake warns once on method change")
+eq(#ML.roll.rolls, 1, "post-flip roll parked, not judged")
+local awardOk18 = ML.Award(1001, "Aaa", "raid")
+eq(awardOk18, false, "award refuses after method flip")
+ok(LW.Find(1001) ~= nil, "row kept after refused award")
+ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "no won mark on refused award")
+-- Restoring the method resumes: intake + award work again.
+liveMethod = "master"
+ML.IntakeChatRoll("Bbb rolls 80 (1-100)")
+eq(#ML.roll.rolls, 2, "intake resumes after restore")
+eq(LW.doAction(1001, "finish"), "finished", "roll finishes")
+local awardOk2 = ML.Award(1001, "Bbb", "raid")
+eq(awardOk2, true, "award succeeds after restore")
+ok(LW.Find(1001) == nil, "awarded row leaves")
+ok(SRData.HasWon(ZugLoot.DB.sheet, 1001, "Bbb"), "winner won-marked")
+-- Direct award (no open roll) also trips via the row stamp.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+liveMethod = "group"
+eq(ML.Award(1001, "Aaa", "raid"), false, "direct award refuses after flip")
+ok(LW.Find(1001) ~= nil, "direct-award row kept")
+ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "direct award marks nothing")
+
+-- 18. Full freeze (issue #18 follow-up): while the method is flipped,
+-- NOTHING may start, resolve, or move — and fired rolls stay put.
+-- No open roll yet: no roll starts (each entry refuses, window
+-- untouched), no finish runs, no sand moves.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+grouping = "raid"
+GetLootMethod = function() return liveMethod end
+GetMasterLootCandidate = function(_slot, i)
+  if i == 1 then return "Aaa" end
+  if i == 2 then return "Bbb" end
+end
+GiveMasterLoot = function() return true end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+liveMethod = "group"
+ok(ML.BeginRoll(1001, "item:1001", "SR", false) == nil,
+  "BeginRoll refuses while frozen")
+ok(ML.roll == nil, "no roll started")
+ok(ML.StartItemRoll(1001) == nil, "StartItemRoll refuses while frozen")
+ok(ML.roll == nil, "still no roll")
+ok(ML.StartRaidRoll(1001) == nil, "StartRaidRoll refuses while frozen")
+ok(ML.roll == nil, "still no roll after raid-roll attempt")
+eq(LW.doAction(1001, "roll"), "roll failed", "window roll refuses while frozen")
+eq(LW.detail.phase, "pick", "pick window untouched by refused start")
+eq(ML.FinishRoll(1001), "closed", "finish with no roll stays closed")
+liveMethod = "master"
+eq(LW.doAction(1001, "roll"), "rolling", "roll starts after restore")
+
+-- Frozen MID-roll: finish refuses (roll + rolls stay), sand with an
+-- open roll refuses first, window actions report honestly.
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+eq(#ML.roll.rolls, 1, "roll lands before the flip")
+liveMethod = "group"
+eq(ML.FinishRoll(1001), "frozen", "finish refuses while frozen")
+ok(ML.roll ~= nil, "open roll survives refused finish")
+eq(#ML.roll.rolls, 1, "landed roll kept through refused finish")
+eq(LW.detail.phase, "rolling", "rolling window untouched by refused finish")
+eq(ML.Award(1001, "Bbb", "raid"), false, "award refuses while frozen mid-roll")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "roll survives refused award")
+eq(LW.doAction(1001, "award-name", "Bbb"), "award failed",
+  "window award reports the refusal honestly")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "roll survives window award refusal")
+eq(LW.detail.phase, "rolling", "refused window award keeps the window")
+-- Rolled-then-finished-then-flipped: continue reopens nothing frozen.
+-- (Finish under master, flip, then "continue" must refuse.)
+liveMethod = "master"
+eq(ML.FinishRoll(1001), "finished", "finish works after restore")
+eq(LW.detail.phase, "award", "award window up")
+liveMethod = "group"
+eq(LW.doAction(1001, "continue"), "roll failed",
+  "continue refuses while frozen")
+ok(ML.roll == nil, "continue started nothing")
+eq(LW.detail.phase, "award", "award window kept through refused continue")
+-- Restore: continue reopens the SAME landed rolls, then award lands.
+liveMethod = "master"
+eq(LW.doAction(1001, "continue"), "rolling", "continue works after restore")
+eq(#ML.roll.rolls, 1, "landed roll carried into the continued roll")
+ML.IntakeChatRoll("Bbb rolls 80 (1-100)")
+eq(#ML.roll.rolls, 2, "intake resumes after restore")
+eq(LW.doAction(1001, "finish"), "finished", "finish after restore")
+eq(ML.Award(1001, "Bbb", "raid"), true, "award after restore")
+ok(SRData.HasWon(ZugLoot.DB.sheet, 1001, "Bbb"), "winner won-marked")
+
+-- Raid-roll fast path under a flip: the open roll survives, the
+-- switch-over never destroys it.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+eq(LW.doAction(1001, "roll"), "rolling", "normal roll starts")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+liveMethod = "group"
+eq(LW.doAction(1001, "raidroll"), "roll failed", "raidroll refuses while frozen")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "open roll survives raid-roll refusal")
+eq(LW.detail.phase, "rolling", "rolling view kept")
 -- 17. Issue #19: repeated raid-rolls don't re-spam the numbered roster.
 -- Same roster within 5 min skips the "[i]:Name" list (only the
 -- "Raid rolling <link>..." line goes out); a changed roster or a
@@ -832,5 +979,8 @@ ZugLoot.DB.autoLootBelow = true
 ML.lootOpen = false
 eq(ML.AutoLootFree(), 0, "closed corpse takes nothing")
 ZugLoot.DB.autoLootBelow = nil
+GetLootMethod = nil
+GetMasterLootCandidate = nil
+ZugLoot.SRSecurity.LootMethod = nil
 
 return T
