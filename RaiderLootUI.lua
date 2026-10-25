@@ -360,7 +360,7 @@ function M.ShowResult(message)
     resultText = resultFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
     resultText:SetAllPoints()
     resultText:SetJustifyH("CENTER")
-    resultText:SetJustifyV("MIDDLE")
+    if resultText.SetJustifyV then resultText:SetJustifyV("MIDDLE") end
     resultFrame:Hide()
   end
   resultText:SetText(message or "")

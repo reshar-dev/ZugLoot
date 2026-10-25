@@ -66,6 +66,14 @@ function Z.InitDB()
   ZugLootDB = ZugLootDB or {}
   ZugLootCharDB = ZugLootCharDB or {}
   ZugLootDB.sheet = ZugLootDB.sheet or nil
+  if ZugLootDB.sheet and type(ZugLootDB.sheet) == "table" then
+    ZugLootDB.sheet.items = ZugLootDB.sheet.items or {}
+    ZugLootDB.sheet.hardres = ZugLootDB.sheet.hardres or {}
+    ZugLootDB.sheet.won = ZugLootDB.sheet.won or {}
+    ZugLootDB.sheet.rolls = ZugLootDB.sheet.rolls or {}
+    ZugLootDB.sheet.players = ZugLootDB.sheet.players or {}
+    ZugLootDB.sheet.meta = ZugLootDB.sheet.meta or {}
+  end
   ZugLootDB.raidArchive = ZugLootDB.raidArchive or {}
   ZugLootDB.drops = ZugLootDB.drops or {}
   ZugLootDB.rollTime = ZugLootDB.rollTime or Z.Limits.ROLL_TIMEOUT_DEFAULT

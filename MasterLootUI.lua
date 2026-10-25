@@ -101,7 +101,21 @@ end
 function M.StartLine(itemID, itemLink, mode)
   local dispName = M.ChatItemLink(itemID, itemLink)
   if mode == "RAIDROLL" then return "Raid rolling " .. dispName .. "..." end
-  return "Roll " .. tostring(dispName) .. " — SR/MS 1-100, roll now!"
+  local line = "Roll " .. tostring(dispName) .. " — SR/MS 1-100, roll now!"
+  local sheet = Z.DB and Z.DB.sheet
+  if sheet and Z.SRData and Z.SRData.SRHolders and itemID then
+    local holders = Z.SRData.SRHolders(sheet, tonumber(itemID) or itemID)
+    if Z.Util.ArrayCount(holders) > 0 then
+      local parts = {}
+      for i = 1, Z.Util.ArrayCount(holders) do
+        local h = holders[i]
+        local bonus = tonumber(h.sr_plus) or 0
+        table.insert(parts, ChatName(h.name) .. " (+" .. bonus .. ")")
+      end
+      line = line .. " (SR: " .. table.concat(parts, ", ") .. ")"
+    end
+  end
+  return line
 end
 
 -- End the roll if it is THIS item's. Every window-close, award, and
@@ -679,9 +693,41 @@ function M.AnnounceVerdict(line, isSim)
   return line
 end
 
+-- Roll totals breakdown for SR items / SR+ rolls: shows everyone the calculation
+function M.RollTotalsLine(res)
+  local entries = res and res.entries or {}
+  local parts = {}
+  local hasSR = false
+  for i = 1, Z.Util.ArrayCount(entries) do
+    local e = entries[i]
+    if e and not e.missroll and not e.excludedWon then
+      local bonus = tonumber(e.sr_plus) or 0
+      local rtype = e.rollType or "MS"
+      if rtype == "SR" or bonus > 0 then
+        hasSR = true
+        local calc = ChatName(e.name) .. ": " .. tostring(e.base)
+        if bonus > 0 then
+          calc = calc .. " + " .. bonus .. " (SR+) = " .. tostring(e.effective or (e.base + bonus))
+        else
+          calc = calc .. " = " .. tostring(e.effective or e.base)
+        end
+        table.insert(parts, calc)
+      end
+    end
+  end
+  if hasSR and Z.Util.ArrayCount(parts) > 0 then
+    return "SR rolls: " .. table.concat(parts, " | ")
+  end
+  return nil
+end
+
 -- One line per finished roll: who won (or tie / no winner). The window
 -- already shows every roll with its kind — chat gets the verdict only.
 function M.AnnounceResult(roll, res)
+  local totals = M.RollTotalsLine(res)
+  if totals then
+    M.AnnounceVerdict(totals, roll and roll.mode == "SIM")
+  end
   local line = M.ResultLine(roll, res)
   -- Sim verdicts speak to the group even when the simmer isn't the ML
   -- (SaySim bypasses the speaker gate); live keeps the ML-only gate.
@@ -1061,7 +1107,9 @@ function M.LootCorpseSlot(link, itemID, winnerName, slotHint)
         -- Self-take handoff that the client rejects (non-ML caller,
         -- bad index): fall through to the plain call, don't strand.
         if not (selfTake and not okM) then
-          return okM, errM
+          if not okM then return false, errM end
+          if errM == false then return false, "handoff rejected" end
+          return true
         end
         if dbg then trace(dbgLine("MASTER-FALLBACK")) end
       elseif not selfTake then
@@ -1078,7 +1126,9 @@ function M.LootCorpseSlot(link, itemID, winnerName, slotHint)
       local okL, errL = superLoot(slot)
       if dbg then trace(dbgLine("LOOT-ISSUED") .. " ok=" .. tostring(okL)
         .. " err=" .. tostring(errL)) end
-      return okL, errL
+      if not okL then return false, errL end
+      if errL == false then return false, "loot call rejected" end
+      return true
     end
     return "noslot"
   end
@@ -1298,8 +1348,19 @@ function M.Award(itemID, winnerName, source, tradeTo)
   -- corpse. Live always has the APIs, so live always takes.
   if source ~= "sim" and row0 and row0.slot ~= nil
       and GetNumLootItems and GetLootSlotLink then
-    local rc = M.LootCorpseSlot(link, itemID, winnerName, row0.slot)
-    if rc == false then return false end
+    local rc, err = M.LootCorpseSlot(link, itemID, winnerName, row0.slot)
+    if rc ~= true and rc ~= "noslot" then
+      local reason = "loot assignment failed"
+      if rc == "nolooot" then reason = "no corpse loot open"
+      elseif rc == "norange" then reason = "you moved away from the corpse"
+      elseif rc == "gone" then reason = "item is no longer on corpse"
+      elseif rc == false and err then reason = tostring(err)
+      end
+      if Z.Print then
+        Z.Print("Cannot award " .. ChatName(winnerName) .. ": " .. reason .. ". Loot remains in window.")
+      end
+      return false
+    end
   end
   if not Z.DB then Z.DB = {} end
   if not Z.DB.sheet then Z.DB.sheet = (Z.SRData and Z.SRData.NewSheet and Z.SRData.NewSheet()) or {} end
@@ -1664,7 +1725,7 @@ function M.SandDistribute(itemID, source)
   if source ~= "sim" and row0 and row0.slot ~= nil
       and GetNumLootItems and GetLootSlotLink then
     local rc = M.LootCorpseSlot(link, itemID, winnerName)
-    if rc == false then return false end
+    if rc ~= true and rc ~= "noslot" then return false end
   end
   source = source or "raid"
   ledger[winnerName] = M.SandTotal(ledger, winnerName) + qty
@@ -2209,12 +2270,8 @@ function M.OnLootOpened()
           .. " item" .. (Z.Util.ArrayCount(found) == 1 and ":" or "s:"))
         for i = 1, Z.Util.ArrayCount(found) do
           local f = found[i]
-          local nm = f.link
-          if Z.LootWindow and Z.LootWindow.DisplayName then
-            nm = Z.LootWindow.DisplayName({ link = f.link, name = f.name,
-              itemID = Z.Util.ItemID(f.link) })
-          end
-          Z.Comm.WarnGroup(i .. ". " .. tostring(nm))
+          local link = M.ChatItemLink(f.itemID or Z.Util.ItemID(f.link), f.link)
+          Z.Comm.WarnGroup(i .. ". " .. tostring(link or f.link))
         end
       end)
     end

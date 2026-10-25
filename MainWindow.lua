@@ -452,18 +452,21 @@ function M.RenderSheet()
       end
       local bodyL = FS(row, "GameFontHighlightSmall", table.concat(left, "\n"))
       bodyL:SetPoint("TOPLEFT", row, "TOPLEFT", 48, -22)
-      bodyL:SetWidth(math.floor((w - 60) / 2)) bodyL:SetJustifyH("LEFT") bodyL:SetJustifyV("TOP")
+      bodyL:SetWidth(math.floor((w - 60) / 2)) bodyL:SetJustifyH("LEFT")
+      if bodyL.SetJustifyV then bodyL:SetJustifyV("TOP") end
       if Z.Util.ArrayCount(right) > 0 then
         local bodyR = FS(row, "GameFontHighlightSmall", table.concat(right, "\n"))
         bodyR:SetPoint("TOPLEFT", row, "TOPLEFT", 48 + math.floor((w - 60) / 2) + 8, -22)
-        bodyR:SetWidth(math.floor((w - 60) / 2)) bodyR:SetJustifyH("LEFT") bodyR:SetJustifyV("TOP")
+        bodyR:SetWidth(math.floor((w - 60) / 2)) bodyR:SetJustifyH("LEFT")
+        if bodyR.SetJustifyV then bodyR:SetJustifyV("TOP") end
       end
     else
       local emptyTxt = "|cff888888(no SRs — open roll)|r"
       if card.unsr then emptyTxt = "|cff888888(not on SR sheet — open roll)|r" end
       local bodyE = FS(row, "GameFontHighlightSmall", emptyTxt)
       bodyE:SetPoint("TOPLEFT", row, "TOPLEFT", 48, -22)
-      bodyE:SetWidth(w - 56) bodyE:SetJustifyH("LEFT") bodyE:SetJustifyV("TOP")
+      bodyE:SetWidth(w - 56) bodyE:SetJustifyH("LEFT")
+      if bodyE.SetJustifyV then bodyE:SetJustifyV("TOP") end
     end
     -- No hint line (the #N corner count says it all; the card still
     -- opens the roll-log window on click).
@@ -603,7 +606,7 @@ function M.ShowItemLog(itemID)
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() f:StartMoving() end)
   f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-  f:SetClampedToScreen(true)
+  if f.SetClampedToScreen then pcall(f.SetClampedToScreen, f, true) end
   -- Above the main window: same strata but a higher level, so the log
   -- never slides under it (nil-safe on mock frames).
   if f.SetFrameStrata then pcall(f.SetFrameStrata, f, "DIALOG") end
@@ -639,7 +642,8 @@ function M.ShowItemLog(itemID)
   -- Session lines, newest first.
   local body = FS(f, "GameFontHighlightSmall", table.concat(data.lines, "\n"))
   body:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -64)
-  body:SetWidth(396) body:SetJustifyH("LEFT") body:SetJustifyV("TOP")
+  body:SetWidth(396) body:SetJustifyH("LEFT")
+  if body.SetJustifyV then body:SetJustifyV("TOP") end
   local n = Z.Util.ArrayCount(data.lines)
   f:SetHeight(math.max(140, 110 + n * 13))
   if f.Show then f:Show() end
@@ -1761,7 +1765,7 @@ function M.Build()
   local f = CreateFrame("Frame", "ZugLootMainWindow", UIParent)
   f:SetWidth(winW) f:SetHeight(winH)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-  f:SetClampedToScreen(true)
+  if f.SetClampedToScreen then pcall(f.SetClampedToScreen, f, true) end
   f:SetMovable(true) f:EnableMouse(true)
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() f:StartMoving() end)

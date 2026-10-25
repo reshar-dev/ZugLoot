@@ -113,6 +113,8 @@ local function resetHarness(rollTime)
   lootSlots = {}
   ZugLoot.DB = { sheet = makeSheet(), rollTime = rollTime or 30 }
   ZugLoot.DB.lootTakeover = true
+  ZugLoot.SRSecurity.LootMethod = nil
+  ZugLoot.SRSecurity.AmML = function() return true end
 end
 
 -- 1. Corpse scan lists every slot; nothing auto-starts.
@@ -657,5 +659,78 @@ ML.IntakeChatRoll("Bbb rolls 10 (1-100)")
 eq(LW.doAction(1001, "finish"), "finished", "open roll finishes")
 eq(LW.detail.menu.winners[1].name, "Aaa", "no live SRs: best MS wins")
 eq(LW.detail.menu.winners[1].rollType, "MS", "won as MS, not SR")
+
+-- 16. GitHub Issues #11, #12, #13, #14 regression gauntlet:
+-- Issue #14: Corpse loot with legacy sheet lacking won table must never crash.
+resetHarness()
+local legacySheet = {
+  items = { [1001] = { quality = 4, rollers = { { name = "Hero", rolls = 1, sr_plus = 5 } } } },
+  hardres = {},
+  meta = { raidID = "Rlegacy" }
+  -- note: won table is deliberately NIL
+}
+ZugLoot.DB.sheet = legacySheet
+ok(SRData.HasWon(legacySheet, 1001, "Hero") == false, "HasWon nil-safe without won table")
+eq(SRData.ReserveBadge(legacySheet, 1001), "SR", "ReserveBadge nil-safe without won table")
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+ok(LW.Find(1001) ~= nil, "OnLootOpened succeeded with nil won table")
+eq(LW.Find(1001).badge, "SR", "badge populated on legacy sheet")
+
+-- Issue #12: Item links preserved in corpse drop announcements (never stripped to plain names).
+resetHarness()
+grouping = "raid"
+lootSlots = { { link = "|cffa335ee|Hitem:19019:0:0:0|h[Thunderfury]|h|r", quality = 5 } }
+sent = {}
+ML.OnLootOpened()
+local linkSeen = false
+for i = 1, #sent do
+  if string.find(sent[i].msg, "|Hitem:19019", 1, true) then linkSeen = true end
+end
+ok(linkSeen, "drop announce carries clickable item link")
+
+-- Issue #13: SR roll announcement lists SR holders with SR+, and finish announces total calculation.
+resetHarness()
+grouping = "raid"
+local testSheet = SRData.NewSheet()
+testSheet.items[1001] = { quality = 4, rollers = {
+  { name = "Bob", rolls = 1, sr_plus = 10 },
+  { name = "Alice", rolls = 1, sr_plus = 0 },
+} }
+ZugLoot.DB.sheet = testSheet
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+local startLine = ML.StartLine(1001, "item:1001", "SR")
+ok(string.find(startLine, "Bob", 1, true) ~= nil and string.find(startLine, "(+10)", 1, true) ~= nil, "start line announces Bob (+10)")
+ok(string.find(startLine, "Alice", 1, true) ~= nil and string.find(startLine, "(+0)", 1, true) ~= nil, "start line announces Alice (+0)")
+LW.OpenDetail(1001)
+eq(LW.doAction(1001, "roll"), "rolling", "roll starts")
+ML.IntakeChatRoll("Bob rolls 75 (1-100)")
+ML.IntakeChatRoll("Alice rolls 80 (1-100)")
+sent = {}
+eq(LW.doAction(1001, "finish"), "finished", "roll finishes")
+local calcSeen = false
+for i = 1, #sent do
+  if string.find(sent[i].msg, "Bob", 1, true) and string.find(sent[i].msg, "75 + 10 (SR+) = 85", 1, true) then calcSeen = true end
+end
+ok(calcSeen, "roll breakdown with SR+ calculation announced to chat")
+eq(LW.detail.menu.winners[1].name, "Bob", "Bob won with SR+ bonus")
+
+-- Issue #11: When assigning loot fails, item must NOT be removed from window and NOT won-marked.
+resetHarness()
+grouping = "raid"
+GetLootMethod = function() return "master" end
+GetMasterLootCandidate = function(_slot, i) if i == 1 then return "Aaa" end end
+GiveMasterLoot = function() return false, "inventory is full" end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+ok(LW.Find(1001) ~= nil, "item initially in loot window")
+local awardOk = ML.Award(1001, "Aaa", "raid")
+eq(awardOk, false, "award returns false on handoff rejection")
+ok(LW.Find(1001) ~= nil, "item retained in loot window after failed award")
+ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "not marked won after failed award")
+GetLootMethod = nil
+GetMasterLootCandidate = nil
 
 return T

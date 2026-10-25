@@ -640,18 +640,21 @@ end
 -- (4th arg) enforces the sheet log floor: below rare never marks
 -- (returns false, marks nothing). Nil quality proceeds (unclassifiable).
 function M.MarkWon(sheet, itemID, player, quality)
+  if not sheet or not itemID or not player then return false end
   if not M.LoggableQuality(quality) then return false end
+  sheet.won = sheet.won or {}
   sheet.won[itemID] = sheet.won[itemID] or {}
   sheet.won[itemID][player] = true
   return true
 end
 
 function M.HasWon(sheet, itemID, player)
-  return sheet.won[itemID] and sheet.won[itemID][player] or false
+  if not sheet or not sheet.won or not itemID or not player then return false end
+  return (sheet.won[itemID] and sheet.won[itemID][player]) and true or false
 end
 
 function M.ClearWon(sheet)
-  sheet.won = {}
+  if sheet then sheet.won = {} end
 end
 
 function M.ClearRolls(sheet)
@@ -774,6 +777,7 @@ end
 -- A re-drop whose only SRs are already won shows NO badge — it rolls
 -- as an item with no SRs.
 function M.ReserveBadge(sheet, itemID)
+  if not sheet or not itemID then return "" end
   if M.IsHardres(sheet, itemID) then return "HR" end
   local n = Util.ArrayCount(M.SRHolders(sheet, itemID))
   if n <= 0 then return "" end
@@ -787,6 +791,7 @@ end
 -- lists no rollers and offers no single-holder shortcut.
 function M.SRNames(sheet, itemID)
   local out = {}
+  if not sheet or not itemID then return out end
   local holders = M.SRHolders(sheet, itemID)
   for i = 1, Util.ArrayCount(holders) do
     if holders[i] and holders[i].name then table.insert(out, holders[i].name) end

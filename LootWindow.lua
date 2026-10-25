@@ -581,7 +581,7 @@ function M.BuildFrame()
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() f:StartMoving() end)
   f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-  f:SetClampedToScreen(true)
+  if f.SetClampedToScreen then pcall(f.SetClampedToScreen, f, true) end
   -- No header/title: rows start at the top edge (more room for loot).
   -- f.title stays nil; Refresh guards it.
   -- X in the top-right corner (standard close button, same action as the
@@ -1677,7 +1677,7 @@ function M.BuildDetailFrame()
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() f:StartMoving() end)
   f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-  f:SetClampedToScreen(true)
+  if f.SetClampedToScreen then pcall(f.SetClampedToScreen, f, true) end
   -- Icon top-center (mirrors the raider frame header). Its own Button
   -- overlay carries the SAME shared handlers as every other icon
   -- (ItemIcon.lua: hover details, ctrl dress-up, click/shift link).
