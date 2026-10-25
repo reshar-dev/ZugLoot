@@ -156,6 +156,50 @@ end
 -- in range 1-N counts (everyone else's chat rolls are ignored); the
 -- number indexes the frozen roster. Finish distributes at once
 -- (the item goes straight out, no award window).
+--
+-- SPAM GATE (issue #19): the numbered roster is chat-heavy (one line per
+-- ~8 raiders). Repeating it for every raid-rolled item floods the
+-- channel, so the broadcast is cached: same roster shape (checksum)
+-- within 5 minutes reuses the last broadcast silently — only the
+-- "Raid rolling <link>..." line goes out, the numbering is skipped.
+-- A changed roster (join/leave) or a stale cache re-broadcasts the
+-- full list. Pure helpers below (RosterChecksum, ShouldBroadcastRoster)
+-- so tests pin the policy without a clock.
+M.RAIDROLL_BROADCAST_WINDOW = 300
+M.lastRaidRollCast = nil -- { checksum, at }: last roster broadcast
+-- Stable checksum of a roster (ordered names): cheap string compare.
+-- Nil-safe: empty/nil roster checksums empty.
+function M.RosterChecksum(roster)
+  local parts = {}
+  for i = 1, Z.Util.ArrayCount(roster or {}) do
+    local nm = roster and roster[i] or nil
+    if nm and nm ~= "" then table.insert(parts, tostring(nm)) end
+  end
+  return table.concat(parts, "\001")
+end
+-- Now in seconds. Client GetTime when present (uptime seconds — the
+-- window is a duration, epoch-independent), else Lua time().
+function M.Now()
+  if GetTime then
+    local ok, t = pcall(GetTime)
+    if ok and type(t) == "number" then return t end
+  end
+  if time then
+    local ok, t = pcall(time)
+    if ok and type(t) == "number" then return t end
+  end
+  return 0
+end
+-- Should the numbered roster go out? True when the roster changed
+-- since the last broadcast or the window (5 min) lapsed.
+-- Pure: pass checksum + now + last cast explicitly.
+function M.ShouldBroadcastRoster(checksum, now, last)
+  checksum = tostring(checksum or "")
+  now = tonumber(now) or 0
+  if not last or last.checksum ~= checksum then return true end
+  local at = tonumber(last.at) or 0
+  return (now - at) >= M.RAIDROLL_BROADCAST_WINDOW
+end
 function M.StartRaidRoll(itemID)
   if not M.RequireML() then return end
   itemID = Z.Util.ItemID(itemID)
@@ -178,6 +222,12 @@ function M.StartRaidRoll(itemID)
   if not roll then return end
   roll.roster = roster -- frozen: leavers/joiners mid-roll change nothing
   roll.n = Z.Util.ArrayCount(roster)
+  -- Spam gate (issue #19): same roster within 5 min skips the numbered
+  -- list — "Raid rolling <link>..." (sent by BeginRoll) is enough.
+  local checksum = M.RosterChecksum(roster)
+  local broadcast = M.ShouldBroadcastRoster(checksum, M.Now(), M.lastRaidRollCast)
+  if broadcast then
+    M.lastRaidRollCast = { checksum = checksum, at = M.Now() }
   -- Numbered raid, chunked so no chat line exceeds limits.
   local buf = ""
   for i = 1, Z.Util.ArrayCount(roster) do
@@ -192,6 +242,7 @@ function M.StartRaidRoll(itemID)
   end
   if buf ~= "" then
     if Z.Comm and Z.Comm.SayGroup then Z.Comm.SayGroup(buf) else Z.Print(buf) end
+  end
   end
   -- The ML rolls 1-N: RandomRoll pops the standard roll frame AND the
   -- system message our intake reads (same as any /roll).
