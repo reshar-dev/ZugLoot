@@ -62,16 +62,23 @@ end
 -- award, or close it first). silent=true skips the addon-message
 -- broadcast (sim must not pop other clients' roller windows).
 --
--- LOOT-METHOD GUARD (issue #18): the method is frozen on the roll at
--- start (roll.method via CurrentLootMethod). If the party/raid leader
--- flips the loot method mid-roll, continuing would strand items:
--- master-loot handoffs fail under group loot and group takes fail
--- under master loot, with winners remembered but nothing moving.
--- Intake pauses (warns once) and Award refuses until the method is
--- restored or the roll is cancelled — the row and won state stay
--- intact either way.
+-- LOOT-METHOD GUARD (issue #18): the session freezes the moment the
+-- live method differs from the scan-time one. While frozen NO
+-- master-loot action runs: no roll may start (BeginRoll refuses, so
+-- StartItemRoll / StartRaidRoll / ContinueRoll all fail shut with the
+-- window untouched), intake parks (warns once), Award/SandDistribute
+-- refuse before EndRoll, and FinishRoll refuses before resolving.
+-- Every refusal leaves the open roll, its landed rolls, the rows, and
+-- the won state exactly as they were — restoring the method (or
+-- cancelling the roll) resumes cleanly. Sim/test flows never consult
+-- the method, and unstamped rows never refuse.
 function M.BeginRoll(itemID, itemLink, mode, silent)
   if M.roll then return nil end
+  -- Frozen: no roll may START under the wrong method — it would
+  -- collect under one mode and award under another, stranding items.
+  -- SIM/test rolls never consult the method. Refusal touches nothing
+  -- (no roll, no window change); the caller reports the failure.
+  if mode ~= "SIM" and M.RefuseWhenFrozen(itemID) then return nil end
   local roll = { itemID = itemID, itemLink = itemLink, mode = mode,
     rolls = {}, silent = silent and true or false,
     method = M.CurrentLootMethod() }
@@ -246,18 +253,22 @@ end
 -- Chat intake. Rolls land on THE roll while its window is open --
 -- fake or real, no difference. Window closed (M.roll nil) = no intake.
 -- "Name rolls 42 (1-100)" -> player, roll, minR, maxR.
--- Loot-method guard (issue #18): rolls landing after a mid-roll method
--- change are parked, not judged — the ranges/handling may belong to a
--- different loot mode. Warns once per roll (roll.methodWarned), then
--- stays quiet until the method is restored or the roll ends.
+-- Loot-method guard (issue #18): rolls landing after a mid-roll
+-- method change are parked, not judged — the ranges/handling may
+-- belong to a different loot mode. Warns once per roll
+-- (roll.methodWarned), then silently parks until the method is
+-- restored or the roll ends.
 function M.IntakeChatRoll(line)
   local roll = M.roll
   if not roll then return end
-  if M.LootMethodChanged(roll) then
+  -- Consult the FROZEN check directly (not RefuseWhenFrozen): parked
+  -- rolls stay warn-once-quiet — a refusal line on EVERY landed roll
+  -- would spam chat while raiders keep rolling into a paused window.
+  if roll.mode ~= "SIM" and M.LootMethodChanged(roll) then
     if not roll.methodWarned then
       roll.methodWarned = true
-      Z.Print("Loot method changed mid-roll — rolls paused. Restore "
-        .. tostring(roll.method or "?") .. " loot or cancel the roll.")
+      Z.Print(M.LootMethodChangedMessage(roll)
+        .. " Rolls are paused — nothing moves.")
     end
     return
   end
@@ -533,6 +544,13 @@ function M.FinishRoll(itemID)
   local roll = M.roll
   if not roll then Z.Print("No active roll.") return "closed" end
   if itemID and roll.itemID ~= itemID then return "closed" end
+  -- Loot-method guard (issue #18): finishing RESOLVES the roll
+  -- (stamps lastRound, clears M.roll, flips the window to award).
+  -- Under the wrong method that destroys the open roll without
+  -- awarding anything, so refuse FIRST — the roll, its landed rolls,
+  -- and the window stay exactly as they were. Returns "frozen"
+  -- (never "finished"): no resolution happened, retry after restore.
+  if M.RefuseWhenFrozen(roll.itemID) then return "frozen" end
   M.lastRound = { itemID = roll.itemID, itemLink = roll.itemLink,
     mode = roll.mode, silent = roll.silent,
     roster = roll.roster, n = roll.n }
@@ -1341,22 +1359,10 @@ function M.Award(itemID, winnerName, source, tradeTo)
   end
   -- Loot-method guard (issue #18) FIRST — before EndRoll: a refused
   -- award must leave the open roll (and its landed rolls) alive, so
-  -- restoring the method resumes the same roll. Frozen source: the
-  -- open roll for this item (BeginRoll stamps method), else the row's
-  -- scan-time stamp (OnLootOpened stamps method). No stamp anywhere:
-  -- nothing to compare, never refuse. Sim rows never trip.
-  if source ~= "sim" then
-    local frozen = nil
-    local rowEarly = Z.LootWindow and Z.LootWindow.Find(itemID) or nil
-    if M.roll and M.roll.itemID == itemID and M.roll.method ~= nil then
-      frozen = M.roll
-    elseif rowEarly and rowEarly.lootMethod ~= nil then
-      frozen = { method = rowEarly.lootMethod, mode = "SR" }
-    end
-    if frozen and M.LootMethodChanged(frozen) then
-      Z.Print(M.LootMethodChangedMessage(frozen))
-      return false
-    end
+  -- restoring the method resumes the same roll. No stamp anywhere
+  -- (old rows, headless, SIM): nothing to compare, never refuse.
+  if source ~= "sim" and M.RefuseWhenFrozen(itemID) then
+    return false
   end
   M.EndRoll(itemID)
   -- Awarded = gone: no finished round left to continue on this item.
@@ -1530,6 +1536,50 @@ function M.LootMethodChangedMessage(roll)
     .. ", now " .. tostring(have)
     .. "). Restore " .. tostring(want)
     .. " loot or cancel the roll — the item stays listed."
+end
+-- Frozen session (issue #18): the corpse rows were scanned under one
+-- loot method but the live method now differs, so NO action may run —
+-- starting, finishing, awarding, or distributing under the wrong
+-- method strands items (the handoff fails silently while the winner
+-- is remembered). Refuses whenever ANY scan-time stamp available for
+-- the item disagrees with the live method — one stale stamp is proof
+-- enough that the session flipped, even if another stamp happens to
+-- match. False when nothing proves a flip (unknown live method, sim
+-- rows, or nothing stamped — never refuse on no evidence). Refuses
+-- loudly (one chat line) so the ML sees exactly what to restore;
+-- otherwise silent. Returns true when the action must NOT proceed.
+function M.RefuseWhenFrozen(itemID)
+  local live = M.CurrentLootMethod()
+  if live == nil then return false end
+  local known = {}
+  local function note(v)
+    if v ~= nil then known[v] = true end
+  end
+  local roll = M.roll
+  if roll and (itemID == nil or roll.itemID == itemID)
+      and roll.mode ~= "SIM" then
+    note(roll.method)
+  end
+  local row = itemID ~= nil and Z.LootWindow
+    and Z.LootWindow.Find and Z.LootWindow.Find(itemID) or nil
+  if row and row.source ~= "sim" then note(row.lootMethod) end
+  local anyKnown, anyMismatch = false, false
+  for want, _ in pairs(known) do
+    anyKnown = true
+    if want ~= live then anyMismatch = true break end
+  end
+  if not anyKnown or not anyMismatch then return false end
+  local want = nil
+  if roll and (itemID == nil or roll.itemID == itemID) then
+    want = roll.method
+  end
+  if want == nil and row then want = row.lootMethod end
+  Z.Print("Loot method changed (was " .. tostring(want)
+    .. ", now " .. tostring(live)
+    .. "). Restore " .. tostring(want)
+    .. " loot or cancel the roll — rolls are paused, nothing moves."
+    .. " When the method is back, rolls continue and items award.")
+  return true
 end
 
 -- Boss threshold (Setup dropdown): the loot threshold applied with the
@@ -1763,6 +1813,13 @@ function M.SandDistribute(itemID, source)
     Z.Print("Nobody in the raid to give sand to.")
     return false
   end
+  -- Loot-method guard (issue #18) BEFORE EndRoll: distributing
+  -- under the wrong method kills the open roll (below) and then
+  -- fails the handoff — rolls lost, sand unmoved. Refuse first so
+  -- the row, roll, and ledger survive until the method is restored.
+  if source ~= "sim" and M.RefuseWhenFrozen(itemID) then
+    return false
+  end
   M.EndRoll(itemID)
   -- Distributed = gone: no finished round left to continue on this item.
   if M.lastRound and M.lastRound.itemID == itemID then M.lastRound = nil end
@@ -1786,20 +1843,6 @@ function M.SandDistribute(itemID, source)
     Z.Print("Not distributing sand to " .. ChatName(winnerName)
       .. ": no loot open. Loot the corpse again, then distribute.")
     return false
-  end
-  -- Loot-method guard (issue #18): same refusal as Award — a handoff
-  -- under the wrong method fails silently. Row kept, ledger untouched.
-  if source ~= "sim" then
-    local frozen = nil
-    if M.roll and M.roll.itemID == itemID and M.roll.method ~= nil then
-      frozen = M.roll
-    elseif row0 and row0.lootMethod ~= nil then
-      frozen = { method = row0.lootMethod, mode = "SR" }
-    end
-    if frozen and M.LootMethodChanged(frozen) then
-      Z.Print(M.LootMethodChangedMessage(frozen))
-      return false
-    end
   end
   if source ~= "sim" and row0 and row0.slot ~= nil
       and GetNumLootItems and GetLootSlotLink then

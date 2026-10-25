@@ -257,4 +257,27 @@ ok(ML.SandCommand(""), "empty ledger prints the empty line")
 ok(string.find(printed[1], "No sand", 1, true) ~= nil, "empty ledger message")
 ok(not ML.SandCommand("bogus"), "bad subcommand refused")
 
+-- 7. Issue #18: a flipped loot method freezes distribution (no move,
+-- no ledger write), START of any new roll is refused too, and
+-- restoring the method resumes cleanly.
+resetHarness()
+local liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+lootSlots = { { link = "item:19183:0:0:0", quality = 3, quantity = 5 } }
+ML.OnLootOpened()
+LW.OpenDetail(SAND)
+liveMethod = "group"
+ok(not ML.SandDistribute(SAND, "loot"), "sand refuses while frozen")
+ok(LW.Find(SAND) ~= nil, "sand row kept")
+eq(ZugLoot.DB.sand.Bbb, nil, "ledger untouched by refused distribute")
+eq(LW.doAction(SAND, "sand"), "sand failed", "window reports the refusal")
+ok(LW.Find(SAND) ~= nil, "window keeps the sand row")
+ok(ML.BeginRoll(SAND, "item:19183:0:0:0", "SR", false) == nil,
+  "sand row starts no roll while frozen")
+liveMethod = "master"
+ok(ML.SandDistribute(SAND, "loot"), "sand distributes after restore")
+eq(ZugLoot.DB.sand.Aaa, 5, "ledger lands after restore")
+ok(LW.Find(SAND) == nil, "sand row gone after restore")
+ZugLoot.SRSecurity.LootMethod = nil
+
 return T

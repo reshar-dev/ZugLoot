@@ -1439,11 +1439,17 @@ function M.doAction(itemID, actionID, extra)
   end
   if actionID == "award" then
     if not d.single then return "needs choice (...)" end
-    if MLUI and MLUI.AwardDirect then
-      MLUI.AwardDirect(d.itemID, d.rollers[1], d.source)
+    -- Loot-method guard (issue #18): a refused award must NOT close
+    -- the window — closing kills the open roll via CloseDetail ->
+    -- EndRoll, destroying the landed rolls the freeze is saving.
+    -- Only a real success leaves the window.
+    local okAward = MLUI and MLUI.AwardDirect
+      and MLUI.AwardDirect(d.itemID, d.rollers[1], d.source)
+    if okAward then
+      M.CloseDetail()
+      return "awarded " .. d.rollers[1]
     end
-    M.CloseDetail()
-    return "awarded " .. d.rollers[1]
+    return "award failed"
   end
   if actionID == "more" then
     return M.MoreLines(d)
@@ -1506,7 +1512,16 @@ function M.doAction(itemID, actionID, extra)
     -- same window. On success the old view wipes and flips to rolling;
     -- on refusal the window drops back to pick with the old rolls kept
     -- for the record (nothing live behind them).
+    -- Loot-method guard (issue #18): EndRoll FIRST would destroy the
+    -- open roll and its landed rolls, then the start refuses under the
+    -- wrong method — rolls lost, nothing started. So check the freeze
+    -- before touching anything: while frozen the window stays exactly
+    -- as it was.
     if MLUI and MLUI.roll and MLUI.roll.itemID ~= d.itemID then
+      return "roll failed"
+    end
+    if MLUI and MLUI.RefuseWhenFrozen
+      and d.source ~= "sim" and MLUI.RefuseWhenFrozen(d.itemID) then
       return "roll failed"
     end
     if MLUI and MLUI.EndRoll then MLUI.EndRoll(d.itemID) end
@@ -1535,8 +1550,13 @@ function M.doAction(itemID, actionID, extra)
     -- name the normal winner in the trade note.
     local nm, via = extra, nil
     if type(extra) == "table" then nm, via = extra.name, extra.via end
-    if MLUI and MLUI.AwardChosen then
-      MLUI.AwardChosen({ name = nm, via = via }, d.itemID, d.source)
+    -- Loot-method guard (issue #18): same as "award" — a refused
+    -- award must not pretend it landed (the old code always returned
+    -- "awarded ..." even on failure). Reports honestly so the row,
+    -- the open roll, and the claimed winner all survive the freeze.
+    local okChosen = MLUI and MLUI.AwardChosen
+      and MLUI.AwardChosen({ name = nm, via = via }, d.itemID, d.source)
+    if okChosen then
       return "awarded " .. tostring(nm)
     end
     return "award failed"

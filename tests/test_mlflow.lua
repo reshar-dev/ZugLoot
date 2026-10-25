@@ -796,6 +796,87 @@ liveMethod = "group"
 eq(ML.Award(1001, "Aaa", "raid"), false, "direct award refuses after flip")
 ok(LW.Find(1001) ~= nil, "direct-award row kept")
 ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "direct award marks nothing")
+
+-- 18. Full freeze (issue #18 follow-up): while the method is flipped,
+-- NOTHING may start, resolve, or move — and fired rolls stay put.
+-- No open roll yet: no roll starts (each entry refuses, window
+-- untouched), no finish runs, no sand moves.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+grouping = "raid"
+GetLootMethod = function() return liveMethod end
+GetMasterLootCandidate = function(_slot, i)
+  if i == 1 then return "Aaa" end
+  if i == 2 then return "Bbb" end
+end
+GiveMasterLoot = function() return true end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+liveMethod = "group"
+ok(ML.BeginRoll(1001, "item:1001", "SR", false) == nil,
+  "BeginRoll refuses while frozen")
+ok(ML.roll == nil, "no roll started")
+ok(ML.StartItemRoll(1001) == nil, "StartItemRoll refuses while frozen")
+ok(ML.roll == nil, "still no roll")
+ok(ML.StartRaidRoll(1001) == nil, "StartRaidRoll refuses while frozen")
+ok(ML.roll == nil, "still no roll after raid-roll attempt")
+eq(LW.doAction(1001, "roll"), "roll failed", "window roll refuses while frozen")
+eq(LW.detail.phase, "pick", "pick window untouched by refused start")
+eq(ML.FinishRoll(1001), "closed", "finish with no roll stays closed")
+liveMethod = "master"
+eq(LW.doAction(1001, "roll"), "rolling", "roll starts after restore")
+
+-- Frozen MID-roll: finish refuses (roll + rolls stay), sand with an
+-- open roll refuses first, window actions report honestly.
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+eq(#ML.roll.rolls, 1, "roll lands before the flip")
+liveMethod = "group"
+eq(ML.FinishRoll(1001), "frozen", "finish refuses while frozen")
+ok(ML.roll ~= nil, "open roll survives refused finish")
+eq(#ML.roll.rolls, 1, "landed roll kept through refused finish")
+eq(LW.detail.phase, "rolling", "rolling window untouched by refused finish")
+eq(ML.Award(1001, "Bbb", "raid"), false, "award refuses while frozen mid-roll")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "roll survives refused award")
+eq(LW.doAction(1001, "award-name", "Bbb"), "award failed",
+  "window award reports the refusal honestly")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "roll survives window award refusal")
+eq(LW.detail.phase, "rolling", "refused window award keeps the window")
+-- Rolled-then-finished-then-flipped: continue reopens nothing frozen.
+-- (Finish under master, flip, then "continue" must refuse.)
+liveMethod = "master"
+eq(ML.FinishRoll(1001), "finished", "finish works after restore")
+eq(LW.detail.phase, "award", "award window up")
+liveMethod = "group"
+eq(LW.doAction(1001, "continue"), "roll failed",
+  "continue refuses while frozen")
+ok(ML.roll == nil, "continue started nothing")
+eq(LW.detail.phase, "award", "award window kept through refused continue")
+-- Restore: continue reopens the SAME landed rolls, then award lands.
+liveMethod = "master"
+eq(LW.doAction(1001, "continue"), "rolling", "continue works after restore")
+eq(#ML.roll.rolls, 1, "landed roll carried into the continued roll")
+ML.IntakeChatRoll("Bbb rolls 80 (1-100)")
+eq(#ML.roll.rolls, 2, "intake resumes after restore")
+eq(LW.doAction(1001, "finish"), "finished", "finish after restore")
+eq(ML.Award(1001, "Bbb", "raid"), true, "award after restore")
+ok(SRData.HasWon(ZugLoot.DB.sheet, 1001, "Bbb"), "winner won-marked")
+
+-- Raid-roll fast path under a flip: the open roll survives, the
+-- switch-over never destroys it.
+resetHarness()
+liveMethod = "master"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+eq(LW.doAction(1001, "roll"), "rolling", "normal roll starts")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+liveMethod = "group"
+eq(LW.doAction(1001, "raidroll"), "roll failed", "raidroll refuses while frozen")
+ok(ML.roll ~= nil and #ML.roll.rolls == 1, "open roll survives raid-roll refusal")
+eq(LW.detail.phase, "rolling", "rolling view kept")
 GetLootMethod = nil
 GetMasterLootCandidate = nil
 ZugLoot.SRSecurity.LootMethod = nil
