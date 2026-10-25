@@ -91,7 +91,14 @@ function Z.InitDB()
   -- Boss threshold for the auto-switch (Setup dropdown, 1 common ..
   -- 4 epic). Default epic: bosses drop epics. Absent = default.
   if ZugLootDB.bossThreshold == nil then ZugLootDB.bossThreshold = 4 end
-  -- Raider roll window policy (Setup toggle): "ml" (default) = the
+  -- LazyPig-style auto-need per trash category (Setup tab): nil = OFF,
+  -- 1 = NEED, 2 = GREED, 0 = PASS. LazyPig-parity default: SAND needs
+  -- (Corrupted Sand auto-roll); everything else off. Absent = off.
+  ZugLootDB.autoNeed = ZugLootDB.autoNeed or {}
+  if ZugLootDB.autoNeed.SAND == nil then ZugLootDB.autoNeed.SAND = 1 end
+  -- Sub-threshold corpse auto-loot (Setup tab): take free rows + coin
+  -- straight off the corpse, no clicks. Absent = off.
+  if ZugLootDB.autoLootBelow == nil then ZugLootDB.autoLootBelow = false end
   -- window pops for master-loot rolls only; "all" = legacy (also
   -- mirror group-loot rolls + local preview). Absent = default.
   if ZugLootDB.raiderFrame ~= "all" then ZugLootDB.raiderFrame = "ml" end
