@@ -128,6 +128,7 @@ end
 local function SetItemInfo(link)
   local iconPath = "Interface\\Icons\\INV_Misc_QuestionMark"
   local name, quality = nil, nil
+  local textHex, border = nil, nil -- exposed via M._TestColors for tests
   if link then
     -- Sheet-style resolution via the shared link-first chain
     -- (GetItemInfo(link), then GetItemInfo(id), then [Name] parse): the
@@ -175,8 +176,16 @@ local function SetItemInfo(link)
   M.itemNameText = (name and tostring(name)) or nil
   if itemName then
     if name and quality and GetItemQualityColor then
-      local _, _, _, hex = GetItemQualityColor(quality)
-      itemName:SetText((hex or "") .. tostring(name) .. "|r")
+      -- Single color source: the shared LootWindow.QualityHex (nil/zero
+      -- quality stays white, never grey). Direct API only as fallback
+      -- when LootWindow failed to load (TOC always loads it first).
+      if Z.LootWindow and Z.LootWindow.QualityHex then
+        textHex = Z.LootWindow.QualityHex(quality)
+      else
+        local _, _, _, h = GetItemQualityColor(quality)
+        textHex = h
+      end
+      itemName:SetText((textHex or "") .. tostring(name) .. "|r")
     elseif name then
       itemName:SetText(tostring(name))
     else
@@ -184,14 +193,24 @@ local function SetItemInfo(link)
     end
   end
   if frame then
-    if quality and GetItemQualityColor then
-      local r, g, b = GetItemQualityColor(quality)
-      frame:SetBackdropBorderColor(r or 0.2, g or 0.2, b or 0.2)
-    else
-      frame:SetBackdropBorderColor(0.2, 0.2, 0.2)
+    -- Border echoes the item quality through the same shared helper
+    -- (hex parsed back to RGB), so the frame tint and the name color
+    -- can never disagree. Unknown quality (nil/zero): neutral grey.
+    local br, bg, bb = 0.2, 0.2, 0.2
+    if quality and tonumber(quality) and tonumber(quality) > 0
+        and Z.LootWindow and Z.LootWindow.QualityHex then
+      local hex = Z.LootWindow.QualityHex(quality)
+      local r, g, b = string.match(hex or "", "^|c%x%x(%x%x)(%x%x)(%x%x)$")
+      if r then
+        br, bg, bb = tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255
+      end
     end
+    frame:SetBackdropBorderColor(br, bg, bb)
+    border = { br, bg, bb }
   end
   M.itemLink = link
+  -- Test probe: the colors SetItemInfo computed (nil when gated out).
+  M._TestColors = { textHex = textHex, border = border }
 end
 
 function M.Build()
