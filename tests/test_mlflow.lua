@@ -730,7 +730,82 @@ local awardOk = ML.Award(1001, "Aaa", "raid")
 eq(awardOk, false, "award returns false on handoff rejection")
 ok(LW.Find(1001) ~= nil, "item retained in loot window after failed award")
 ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "not marked won after failed award")
-GetLootMethod = nil
-GetMasterLootCandidate = nil
+-- 17. Issue #19: repeated raid-rolls don't re-spam the numbered roster.
+-- Same roster within 5 min skips the "[i]:Name" list (only the
+-- "Raid rolling <link>..." line goes out); a changed roster or a
+-- stale cache re-broadcasts the full list.
+-- Pure policy first: checksum + window, no clock needed.
+eq(ML.RosterChecksum({ "A", "B", "C" }), "A\001B\001C", "checksum joins names")
+eq(ML.RosterChecksum(nil), "", "nil roster checksums empty")
+eq(ML.RosterChecksum({}), "", "empty roster checksums empty")
+ok(ML.ShouldBroadcastRoster("A", 1000, nil), "first raid-roll broadcasts")
+ok(not ML.ShouldBroadcastRoster("A", 1000, { checksum = "A", at = 1000 }), "same roster, fresh: skip")
+ok(not ML.ShouldBroadcastRoster("A", 1299, { checksum = "A", at = 1000 }), "same roster within 5 min: skip")
+ok(ML.ShouldBroadcastRoster("A", 1300, { checksum = "A", at = 1000 }), "same roster after 5 min: broadcast")
+ok(ML.ShouldBroadcastRoster("B", 1001, { checksum = "A", at = 1000 }), "roster changed: broadcast")
+-- End to end: two raid-rolls back to back, second skips the numbering.
+resetHarness()
+grouping = "raid"
+GetNumRaidMembers = function() return 3 end
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Bluefelon" })[i]
+end
+UnitName = function(u)
+  if u == "player" then return "Pysanka" end
+  return "Pysanka"
+end
+GetTime = function() return 1000 end
+RandomRoll = function() end
+lootSlots = { { link = "item:1001:0:0:0", quality = 4 } }
+ML.lastRaidRollCast = nil
+ML.OnLootOpened()
+LW.OpenDetail(1001)
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "first raid-roll starts")
+local numbered1 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered1 = numbered1 + 1 end
+end
+ok(numbered1 > 0, "first raid-roll broadcasts the numbered roster")
+ML.roll = nil -- roll over (test drives the broadcast, not the intake)
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "second raid-roll starts")
+local numbered2, startSeen = 0, false
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered2 = numbered2 + 1 end
+  if string.find(sent[i].msg, "Raid rolling", 1, true) then startSeen = true end
+end
+eq(numbered2, 0, "repeat raid-roll skips the numbered roster")
+ok(startSeen, "repeat raid-roll still announces the item")
+-- Roster change re-broadcasts the full list.
+ML.roll = nil
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Newbie" })[i]
+end
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "changed-roster raid-roll starts")
+local numbered3 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered3 = numbered3 + 1 end
+end
+ok(numbered3 > 0, "changed roster re-broadcasts the numbered list")
+-- Stale cache (5+ min) re-broadcasts too.
+ML.roll = nil
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Tenshiy", "Newbie" })[i]
+end
+GetTime = function() return 1000 + 301 end
+sent = {}
+eq(LW.doAction(1001, "raidroll"), "rolling", "stale-cache raid-roll starts")
+local numbered4 = 0
+for i = 1, #sent do
+  if string.find(sent[i].msg, "[1]:", 1, true) then numbered4 = numbered4 + 1 end
+end
+ok(numbered4 > 0, "stale cache re-broadcasts the numbered list")
+GetNumRaidMembers = function() return 0 end
+GetRaidRosterInfo = function() return nil end
+UnitName = function() return "SoloPlayer" end
+GetTime = nil
+RandomRoll = function() end
 
 return T
