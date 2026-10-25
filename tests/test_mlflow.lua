@@ -733,4 +733,29 @@ ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "not marked won after faile
 GetLootMethod = nil
 GetMasterLootCandidate = nil
 
+-- 17. Issue #17: sub-threshold auto-loot row selection. Free rows +
+-- coin with a corpse slot are taken; group-roll rows (Blizzard owns
+-- them), ignored rows, and slotless rows are never touched.
+local freeRows = ML.FreeRowsForAutoLoot({
+  { itemID = 1, slot = 1, free = true },
+  { itemID = "Coin", slot = 2, coin = true },
+  { itemID = 3, slot = 3, free = true, group = true },
+  { itemID = 4, slot = 4, free = true, ignored = true },
+  { itemID = 5, free = true }, -- no slot: nothing to take
+  { itemID = 6, slot = 6 }, -- roll row, not free
+})
+eq(#freeRows, 2, "only free + coin selected")
+eq(freeRows[1].itemID, 1, "free row taken")
+eq(freeRows[2].itemID, "Coin", "coin taken")
+eq(#ML.FreeRowsForAutoLoot(nil), 0, "nil-safe")
+eq(#ML.FreeRowsForAutoLoot({}), 0, "empty-safe")
+-- Gated: option off or no corpse open takes nothing.
+ZugLoot.DB.autoLootBelow = false
+ML.lootOpen = true
+eq(ML.AutoLootFree(), 0, "option off takes nothing")
+ZugLoot.DB.autoLootBelow = true
+ML.lootOpen = false
+eq(ML.AutoLootFree(), 0, "closed corpse takes nothing")
+ZugLoot.DB.autoLootBelow = nil
+
 return T
