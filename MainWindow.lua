@@ -1592,9 +1592,12 @@ function M.RenderSetup()
     slider.paint = paint
     local dragging = false
     local function xToVal(cx)
+      -- Frame methods need colon calls (dot-call throws "used :
+      -- instead of ." on the client); pcall-guarded for headless.
       local left = nil
-      if host.GetLeft and host.GetLeft() then
-        left = host:GetLeft()
+      if host.GetLeft then
+        local okL, lv = pcall(function() return host:GetLeft() end)
+        if okL and lv then left = lv end
       end
       local rel = nil
       local scale = 1
