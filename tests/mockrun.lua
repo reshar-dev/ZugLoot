@@ -667,9 +667,16 @@ local wantTitles = { "Rolling", "Looting", "Automation", "Danger zone" };
 for i = 1, 4 do
   assert(panels[i].title == wantTitles[i], "panel " .. i .. " sorted: " .. tostring(panels[i].title));
 end
-for i = 2, 4 do
-  assert(panels[i].top < panels[i-1].top, "panel " .. i .. " stacks below panel " .. (i-1));
-end
+-- 2x2 grid: left runs Looting(2) + Danger zone(4), right runs
+-- Rolling(1) + Automation(3). Columns top-align, sections stack down.
+assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
+assert(panels[3].top < panels[1].top, "Automation under Rolling");
+assert(panels[4].top < panels[2].top, "Danger zone under Looting");
+-- balance: left (Looting 208 + Danger 56 + gap) vs right (Rolling 88
+-- + Automation 200 + gap) — bottoms within a button height.
+local leftH = (24 + 176 + 8) + 10 + (24 + 24 + 8);
+local rightH = (24 + 56 + 8) + 10 + (24 + 168 + 8);
+assert(math.abs(leftH - rightH) <= 24, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
 for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");

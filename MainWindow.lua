@@ -1450,26 +1450,37 @@ function M.RenderSetup()
   -- section is wrapped in a rounded gold panel. Absolute Y inside a
   -- section counts down from the heading; the panel is sized from the
   -- deepest widget + padding. Sections stack with a gap.
-  local BW, BH = 150, 24 -- standard button footprint
+  local BH = 24 -- standard button height (widths below are per-column)
   local SMALL_H = 20 -- compact (auto-need grid) button height
   local GAP = 10 -- vertical gap between panels
   local PAD_TOP, PAD_BOTTOM, PAD_SIDE = 24, 8, 8 -- heading + margins
-  local function mkButton(parent)
+  local BW = 150 -- full button width (half-column buttons use halfBW)
+  local y = -52 -- top of the two-column area (below the subtitle)
+  local panels = {} -- debug hook: { title, panel, top } per section
+  -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
+  -- Automation. Column width splits the row minus the gutter.
+  local colW = math.floor((BODY_WIDTH - 8 - GAP) / 2)
+  local leftX, rightX = 4, 4 + colW + GAP
+  local ly, ry = y, y -- running cursors per column
+  -- Half-width button footprint: the column fits ONE 150px button
+  -- plus margins, not two — shrink so nothing clips the panel edge.
+  local halfBW = colW - PAD_SIDE * 2
+  local function halfButton(parent)
     local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    btn:SetWidth(BW) btn:SetHeight(BH)
+    btn:SetWidth(halfBW) btn:SetHeight(BH)
     return btn
   end
-  local y = -52 -- running cursor on `row` (below the subtitle)
-  local panels = {} -- debug hook: { title, panel, top } per section
   -- Section 1: Rolling — auto-roll + the raider roll-window policy.
+  -- Right column, top.
   do
     local contentH = BH + 8 + BH
-    local panel = M.SetupPanel(row, BODY_WIDTH - 8, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", 4, y)
+    local panelH = PAD_TOP + contentH + PAD_BOTTOM
+    local panel = M.SetupPanel(row, colW, panelH)
+    panel:SetPoint("TOPLEFT", row, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Rolling")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
-    local b3 = mkButton(panel)
+    local b3 = halfButton(panel)
     b3:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
     if Z.CharDB and Z.CharDB.autoRoll then b3:SetText("Auto-roll: ON") else b3:SetText("Auto-roll: OFF") end
     b3:SetScript("OnClick", function()
@@ -1481,7 +1492,7 @@ function M.RenderSetup()
     -- ML = pop for master-loot rolls (ROLL_REQ / ML roll call), group
     -- loot + solo stay shut; ALL = legacy (also mirror group-loot rolls
     -- + local preview). Same gate the window enforces at open.
-    local b11 = mkButton(panel)
+    local b11 = halfButton(panel)
     b11:SetPoint("TOPLEFT", b3, "BOTTOMLEFT", 0, -8)
     local function rfLabel()
       if Z.DB and Z.DB.raiderFrame == "all" then return "Roll window: ALL" end
@@ -1499,22 +1510,24 @@ function M.RenderSetup()
       "Default ML: group loot stays in Blizzard's Need/Greed frames, solo stays shut.")
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.raiderFrame = b11
-    table.insert(panels, { title = "Rolling", panel = panel, top = y })
-    y = y - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Rolling", panel = panel, top = ry })
+    ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
   -- Section 2: Looting — loot-frame takeover + boss auto-switch flow.
+  -- Left column, top (tallest panel: anchors the column).
   do
     -- takeLabel row (24) + 8 + ML row (24) + 8 + back row (24) + 8 +
     -- threshold row (24) + the info block (~44) underneath.
     local contentH = BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48
-    local panel = M.SetupPanel(row, BODY_WIDTH - 8, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", 4, y)
+    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", row, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
+    -- Looting buttons use the shared half-width footprint.
     -- Loot-frame takeover toggle (the click-to-loot kill-switch stands
     -- it down persistently; this opts back in). Same as /zl lootframe.
-    local b6 = mkButton(panel)
+    local b6 = halfButton(panel)
     b6:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
     local function takeLabel()
       if Z.LootWindow and Z.LootWindow.TakeoverWanted() then
@@ -1536,7 +1549,7 @@ function M.RenderSetup()
     -- Auto loot-method switching (ML boss flow): flip to master
     -- loot when the ML selects a boss, flip back to group loot once
     -- the boss is fully looted. Two independent toggles, off by default.
-    local b8 = mkButton(panel)
+    local b8 = halfButton(panel)
     b8:SetPoint("TOPLEFT", b6, "BOTTOMLEFT", 0, -8)
     local function mlLabel()
       if Z.DB and Z.DB.mlOnBoss then return "ML on boss: ON" end
@@ -1549,7 +1562,7 @@ function M.RenderSetup()
     end)
     Tip(b8, "ML on boss", "As master looter, switch to master loot when you select a raid boss.",
       "Master looter only, raid only. Worldboss flag or 100k+ HP (trash never reaches it).")
-    local b9 = mkButton(panel)
+    local b9 = halfButton(panel)
     b9:SetPoint("TOPLEFT", b8, "BOTTOMLEFT", 0, -8)
     local function grpLabel()
       if Z.DB and Z.DB.backToGroup then return "Back to group: ON" end
@@ -1565,7 +1578,7 @@ function M.RenderSetup()
     -- Boss threshold dropdown: which loot threshold the auto-switch
     -- applies with master loot (1 common .. 4 epic). Button shows the
     -- current pick; clicking opens the 4-row choice list below it.
-    local b10 = mkButton(panel)
+    local b10 = halfButton(panel)
     b10:SetPoint("TOPLEFT", b9, "BOTTOMLEFT", 0, -8)
     local function threshLabel()
       local MLUI = Z.MasterLootUI
@@ -1583,25 +1596,33 @@ function M.RenderSetup()
       "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)\n" ..
       "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl simraid <raid>")
     info:SetPoint("TOPLEFT", b10, "BOTTOMLEFT", 0, -8)
-    info:SetWidth(BODY_WIDTH - 32) info:SetJustifyH("LEFT")
+    info:SetWidth(colW - PAD_SIDE * 2) info:SetJustifyH("LEFT")
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.mlOnBoss = b8
     M.setupBtns.backToGroup = b9
     M.setupBtns.bossThreshold = b10
-    table.insert(panels, { title = "Looting", panel = panel, top = y })
-    y = y - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Looting", panel = panel, top = ly })
+    ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
   -- Section 3: Automation — LazyPig-style auto-need votes for raid
   -- trash (per-category OFF -> NEED -> GREED -> PASS; silent
   -- background votes) + sub-threshold corpse auto-loot.
+  -- Right column, under Rolling: two-across grid when the half-width
+  -- panel fits it (balances against the tall Looting panel), else one
+  -- per row so narrow windows never clip.
   do
     local cats = (Z.AutoRoll and Z.AutoRoll.CATEGORIES) or {}
-    local nRows = math.ceil(Z.Util.ArrayCount(cats) / 2)
-    if nRows < 1 then nRows = 1 end
+    local nCats = Z.Util.ArrayCount(cats)
+    if nCats < 1 then nCats = 1 end
+    local twoAcross = colW >= PAD_SIDE * 2 + BW * 2 + 8
+    local perRow = twoAcross and 2 or 1
+    -- Fill the column: full width single-column, split evenly two-across.
+    local autoBW = math.floor((colW - PAD_SIDE * 2 - (perRow - 1) * 8) / perRow)
+    local nRows = math.ceil(nCats / perRow)
     -- grid (compact buttons) + 8 + the auto-loot row underneath.
     local contentH = nRows * SMALL_H + (nRows - 1) * 4 + 8 + SMALL_H
-    local panel = M.SetupPanel(row, BODY_WIDTH - 8, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", 4, y)
+    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", row, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Automation")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1609,11 +1630,11 @@ function M.RenderSetup()
     for i = 1, Z.Util.ArrayCount(cats) do
       local cat = cats[i] -- fresh local per iteration for the closure
       local nb = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-      nb:SetWidth(BW) nb:SetHeight(SMALL_H)
-      local col = math.mod(i - 1, 2)
-      local rrow = math.floor((i - 1) / 2)
-      -- two-column grid, compact 4px gutters inside the panel.
-      nb:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE + col * (BW + 8), -PAD_TOP - rrow * (SMALL_H + 4))
+      nb:SetWidth(autoBW) nb:SetHeight(SMALL_H)
+      local acol = math.mod(i - 1, perRow)
+      local arow = math.floor((i - 1) / perRow)
+      nb:SetPoint("TOPLEFT", panel, "TOPLEFT",
+        PAD_SIDE + acol * (autoBW + 8), -PAD_TOP - arow * (SMALL_H + 4))
       local function nzLabel()
         local v = Z.AutoRoll and Z.AutoRoll.VoteFor and Z.AutoRoll.VoteFor(cat) or nil
         local lab = Z.AutoRoll and Z.AutoRoll.VoteLabel and Z.AutoRoll.VoteLabel(v) or "OFF"
@@ -1631,7 +1652,7 @@ function M.RenderSetup()
       nzBtns[cat] = nb
     end
     local b12 = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    b12:SetWidth(BW) b12:SetHeight(SMALL_H)
+    b12:SetWidth(colW - PAD_SIDE * 2) b12:SetHeight(SMALL_H)
     b12:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - contentH + SMALL_H)
     local function alLabel()
       if Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow() then
@@ -1652,33 +1673,36 @@ function M.RenderSetup()
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.autoNeed = nzBtns
     M.setupBtns.autoLootBelow = b12
-    table.insert(panels, { title = "Automation", panel = panel, top = y })
-    y = y - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Automation", panel = panel, top = ry })
+    ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
-  -- Section 4: Danger zone — factory reset, last and visually apart.
+  -- Section 4: Danger zone — factory reset. Left column, under
+  -- Looting: left runs Looting + Danger (~290), right runs Rolling +
+  -- Automation (~298) — bottoms 8px apart, no dead space, no footer.
   do
     local contentH = BH
-    local panel = M.SetupPanel(row, BODY_WIDTH - 8, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", 4, y)
+    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", row, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Danger zone")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
     -- (Clear won marks removed: header Reset rolls is the same action,
     -- no duplicates.)
-    local b5 = mkButton(panel)
+    local b5 = halfButton(panel)
     b5:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
     b5:SetText("Reset all settings")
     b5:SetScript("OnClick", function() Z.RequestResetAllSettings() end)
     Tip(b5, "Reset all settings",
       "Factory reset: sheet, raid history, drop log and all options back to defaults.",
       "Confirmation window first. Local data only — anyone can use it.")
-    table.insert(panels, { title = "Danger zone", panel = panel, top = y })
-    y = y - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Danger zone", panel = panel, top = ly })
+    ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    -- Row height = bottom of the deeper column (2x2 grid, no footer).
+    local bottomY = (ly < ry) and ly or ry
+    row:SetHeight(-(bottomY + GAP) + 52)
+    M.setupPanels = panels
+    TrackRow(key, row, (-(bottomY + GAP) + 52))
   end
-  -- Row height = everything stacked + trailing gap trimmed.
-  row:SetHeight(-(y + GAP) + 52)
-  M.setupPanels = panels
-  TrackRow(key, row, (-(y + GAP) + 52))
 end
 
 -------------------------------------------------------------------------------
