@@ -1500,22 +1500,157 @@ function M.RenderSetup()
       PAD_SIDE + col * (duoW + 8), rowY)
     return btn
   end
-  -- Single full-width button (Danger zone reset, auto-loot row):
-  -- same outer margins, spans the whole content width.
-  local function fullButton(parent, rowY, h)
+  -- Grid rule: NOTHING spans two columns. Every panel is a 2-col
+  -- grid; a lone control takes one cell (left-aligned), never the
+  -- full width. Duo pairs use duoButton; singles use gridSingle.
+  local function gridSingle(parent, rowY, h)
     local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    btn:SetWidth(colW - PAD_SIDE * 2) btn:SetHeight(h or BH)
+    btn:SetWidth(duoW) btn:SetHeight(h or BH)
     btn:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD_SIDE, rowY)
     return btn
+  end
+  -- Custom slider: the OptionsSliderTemplate art is fixed-size and
+  -- ignores SetWidth (it bleeds past narrow cells). This one is
+  -- plain frames + textures sized EXACTLY to the cell: track bar,
+  -- gold fill to the value, square thumb, min/max captions under
+  -- the ends. Drag: press-and-hold thumb (OnUpdate polls the cursor
+  -- x), click jumps the track. Headless: mock frames lack
+  -- GetCursorPosition — SetRollTimeout stays the single writer and
+  -- the pin drives it directly.
+  local function gridSlider(parent, rowY, lo, hi, get, set, tip, h)
+    local w = duoW
+    local wrapH = h or BH
+    local wrap = CreateFrame("Frame", nil, parent)
+    if wrap then
+      wrap:SetWidth(w) wrap:SetHeight(wrapH)
+      wrap:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD_SIDE, rowY)
+    end
+    local host = wrap or parent
+    local ox = (wrap ~= nil) and 0 or PAD_SIDE
+    local oy = (wrap ~= nil) and 0 or rowY
+    local trackH = 6
+    local trackY = oy - 12 -- below the 10px readout + 2px gap
+    if host.CreateTexture then
+      local track = host:CreateTexture(nil, "ARTWORK")
+      if track.SetTexture then track:SetTexture(0.16, 0.17, 0.20, 1) end
+      if track.SetPoint then
+        track:SetPoint("TOPLEFT", host, "TOPLEFT", ox, trackY)
+        track:SetPoint("BOTTOMRIGHT", host, "TOPLEFT", ox + w, trackY - trackH)
+      end
+      if track.SetWidth then track:SetWidth(w) end
+      if track.SetHeight then track:SetHeight(trackH) end
+    end
+    local fill = nil
+    if host.CreateTexture then
+      fill = host:CreateTexture(nil, "ARTWORK")
+      if fill.SetTexture then fill:SetTexture(PAL.gold[1], PAL.gold[2], PAL.gold[3], 0.85) end
+      if fill.SetPoint then
+        fill:SetPoint("TOPLEFT", host, "TOPLEFT", ox, trackY)
+        fill:SetPoint("BOTTOMRIGHT", host, "TOPLEFT", ox + 1, trackY - trackH)
+      end
+    end
+    local thumb = CreateFrame("Button", nil, host)
+    if thumb then
+      thumb:SetWidth(10) thumb:SetHeight(16)
+      if thumb.CreateTexture then
+        local tt = thumb:CreateTexture(nil, "OVERLAY")
+        if tt then
+          if tt.SetTexture then tt:SetTexture(PAL.gold[1], PAL.gold[2], PAL.gold[3], 1) end
+          if tt.SetAllPoints then tt:SetAllPoints(thumb) end
+        end
+      end
+    end
+    local loFS = FS(host, "GameFontHighlightSmall", tostring(lo))
+    if loFS.SetPoint then loFS:SetPoint("TOPLEFT", host, "TOPLEFT", ox, trackY - trackH - 1) end
+    local hiFS = FS(host, "GameFontHighlightSmall", tostring(hi))
+    if hiFS.SetPoint then hiFS:SetPoint("TOPRIGHT", host, "TOPRIGHT", 0, trackY - trackH - 1) end
+    local slider = {}
+    slider.wrap = wrap
+    slider.thumb = thumb
+    slider.mn, slider.mx = lo, hi -- test hook: range (mirrors SetMinMaxValues)
+    local function frac()
+      local v = get and get() or lo
+      v = tonumber(v) or lo
+      if hi <= lo then return 0 end
+      local f = (v - lo) / (hi - lo)
+      if f < 0 then f = 0 end
+      if f > 1 then f = 1 end
+      return f
+    end
+    local function paint()
+      local f = frac()
+      local fx = ox + math.floor(f * w + 0.5)
+      if fill and fill.SetPoint then
+        fill:SetPoint("BOTTOMRIGHT", host, "TOPLEFT", fx, trackY - trackH)
+      end
+      if thumb and thumb.SetPoint then
+        thumb:ClearAllPoints()
+        thumb:SetPoint("CENTER", host, "TOPLEFT", fx, trackY - math.floor(trackH / 2))
+      end
+      return f
+    end
+    slider.paint = paint
+    local dragging = false
+    local function xToVal(cx)
+      local left = nil
+      if host.GetLeft and host.GetLeft() then
+        left = host:GetLeft()
+      end
+      local rel = nil
+      local scale = 1
+      if UIParent and UIParent.GetScale then
+        local okS, sc = pcall(UIParent.GetScale, UIParent)
+        if okS and tonumber(sc) and tonumber(sc) > 0 then scale = tonumber(sc) end
+      end
+      if left and cx then rel = (cx - left) / scale end
+      if rel == nil then rel = frac() * w end
+      local f = rel / w
+      if f < 0 then f = 0 end
+      if f > 1 then f = 1 end
+      return lo + math.floor(f * (hi - lo) + 0.5)
+    end
+    local function commitAt(cx)
+      local v = xToVal(cx)
+      if set then set(v) end
+      paint()
+    end
+    slider.commitAt = commitAt
+    if thumb and thumb.SetScript then
+      thumb:SetScript("OnMouseDown", function() dragging = true end)
+      thumb:SetScript("OnMouseUp", function() dragging = false end)
+      thumb:EnableMouse(true)
+    end
+    local updater = wrap or thumb
+    if updater and updater.SetScript then
+      updater:SetScript("OnUpdate", function()
+        if dragging and GetCursorPosition then
+          local ok, cx = pcall(GetCursorPosition)
+          if ok and cx then commitAt(cx) end
+        end
+      end)
+    end
+    if wrap and wrap.EnableMouse then wrap:EnableMouse(true) end
+    if wrap and wrap.SetScript then
+      wrap:SetScript("OnMouseDown", function(_, _, cx)
+        if cx ~= nil then commitAt(cx)
+        elseif GetCursorPosition then
+          local ok, mx = pcall(GetCursorPosition)
+          if ok and mx then commitAt(mx) end
+        end
+      end)
+    end
+    if tip and wrap then Tip(wrap, tip[1], tip[2], tip[3]) end
+    slider.refresh = paint
+    paint()
+    return slider
   end
   -- Section 1: Rolling — auto-roll + the raider roll-window policy +
   -- the roll timer (slider 1..30s with an editable seconds box).
   -- Right column, top. Two-across: auto-roll | roll window, then the
-  -- timer row (template slider left, value box right) underneath.
-  -- The template owns the row's labels (Low/High/Text) — no extra
-  -- caption air needed.
+  -- timer cell underneath (custom slider + compact box stacked in
+  -- ONE duo cell: readout, track, captions, box = 66px tall).
   do
-    local contentH = BH + 8 + BH
+    local contentH = BH + 8 + 66
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
     local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
@@ -1548,9 +1683,11 @@ function M.RenderSetup()
     end)
     Tip(b11, "Roll window", "When the raider roll window pops: master-loot rolls only (ML), or every roll (ALL).",
       "Default ML: group loot stays in Blizzard's Need/Greed frames, solo stays shut.")
-    -- Roll timer: slider (1..30s) + editable seconds box. Both write
-    -- the same value via MasterLootUI.SetRollTimeout and mirror each
-    -- other; the box clamps on Enter, the slider on drag.
+    -- Roll timer: ONE duo cell holding a custom slider + the value
+    -- box stacked vertically (track on top, box under it). Both write
+    -- the same value via MasterLootUI.SetRollTimeout; the box clamps
+    -- on Enter, the slider commits on drag/click. One cell wide —
+    -- the grid rule holds (nothing spans two columns).
     local MLUI = Z.MasterLootUI
     local function curTimeout()
       if MLUI and MLUI.RollTimeout then return MLUI.RollTimeout() end
@@ -1558,106 +1695,63 @@ function M.RenderSetup()
     end
     local loT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
     local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
-    -- One wrapper owns the whole timer row: template slider (~2/3,
-    -- left) + compact value box (~1/3, right). The wrapper spans the
-    -- full content width so both controls stay inside the gold with
-    -- normal margins — the template's bleed never reaches the edge.
-    local timerRow = CreateFrame("Frame", nil, panel)
-    if timerRow then
-      timerRow:SetWidth(colW - PAD_SIDE * 2)
-      timerRow:SetHeight(BH)
-      timerRow:SetPoint("TOPLEFT", panel, "TOPLEFT",
+    local timerCell = CreateFrame("Frame", nil, panel)
+    if timerCell then
+      timerCell:SetWidth(duoW) timerCell:SetHeight(66)
+      timerCell:SetPoint("TOPLEFT", panel, "TOPLEFT",
         PAD_SIDE, -PAD_TOP - BH - 8)
     end
-    local tParent = timerRow or panel
-    local tOff = (timerRow ~= nil) and 0 or (PAD_SIDE)
-    local tTop = (timerRow ~= nil) and 0 or (-PAD_TOP - BH - 8)
-    local tW = colW - PAD_SIDE * 2
-    local sliderW = tW - 64 - 8 -- box takes ~1/3, slider the rest
-    -- The template owns this row's labels: <Name>Low / <Name>High
-    -- are the range ends, <Name>Text is the live value. Name the
-    -- slider so the template builds them, then drive them — no custom
-    -- caption frames needed. Headless (anonymous mock frames): the
-    -- lookup misses and the row degrades to slider + box, still
-    -- fully testable through min/max/value.
-    local sl = CreateFrame("Slider", "ZugLootRollTimer", tParent, "OptionsSliderTemplate")
-    local function templStr(suffix)
-      if sl and sl.GetName and getglobal then
-        local okN, sname = pcall(sl.GetName, sl)
-        if okN and type(sname) == "string" then
-          local okG, g = pcall(getglobal, sname .. suffix)
-          if okG and g then return g end
-        end
-      end
-      return nil
-    end
-    local function showSliderVal(v)
-      local textF = templStr("Text")
-      if textF and textF.SetText then pcall(textF.SetText, textF, tostring(v) .. "s") end
-    end
-    if sl then
-      sl:SetWidth(sliderW) sl:SetHeight(16)
-      sl:SetPoint("TOPLEFT", tParent, "TOPLEFT", tOff, tTop + math.floor((BH - 16) / 2))
-      if sl.SetMinMaxValues then sl:SetMinMaxValues(loT, hiT) end
-      if sl.SetValueStep then sl:SetValueStep(1) end
-      if sl.SetValue then sl:SetValue(curTimeout()) end
-      local lowF, highF = templStr("Low"), templStr("High")
-      if lowF and lowF.SetText then pcall(lowF.SetText, lowF, tostring(loT)) end
-      if highF and highF.SetText then pcall(highF.SetText, highF, tostring(hiT)) end
-      showSliderVal(curTimeout())
-    end
-    -- Compact value box (~1/3 of the row): fits "30" + padding,
-    -- right-aligned in the wrapper so the panel inset holds.
-    local box = PYEdit(tParent, 64, BH,
+    local tParent = timerCell or panel
+    local sliderTop = (timerCell ~= nil) and 0 or (-PAD_TOP - BH - 8)
+    -- Readout rides top-right INSIDE the slider's own row (same
+    -- y-band as the heading gap): no extra row, panel stays tall.
+    local valFS = FS(tParent, "GameFontHighlightSmall", tostring(curTimeout()) .. "s")
+    if valFS.SetPoint then valFS:SetPoint("TOPRIGHT", tParent, "TOPRIGHT", 0, sliderTop) end
+    local sl = gridSlider(tParent, sliderTop - 10, loT, hiT,
+      curTimeout,
+      function(v)
+        if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
+      end,
+      { "Roll timer", "Seconds rollers get before the roll resolves.",
+        "1..30s, default 10s. Applies to the next roll." },
+      12 + 6 + 1 + 10)
+    -- Compact value box (~1/3 cell) under the slider stack: cell
+    -- layout is readout 10 + wrap 29 (track 6 + captions 10) + 2 +
+    -- box 20 = 61 of 66. Box width 64 keeps the grid rhythm.
+    local box = PYEdit(tParent, 64, 20,
       function() return tostring(curTimeout()) end,
       function(v)
         if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
       end, "roll timeout")
     if box and box.SetPoint then
-      box:SetPoint("TOPRIGHT", tParent, "TOPRIGHT", 0, tTop)
+      box:SetPoint("TOPRIGHT", tParent, "TOPRIGHT", 0, sliderTop - 10 - 29 - 2)
       if box.SetJustifyH then box:SetJustifyH("CENTER") end
     end
-    -- Two-way mirror: slider drag rewrites the box + template Text,
-    -- box commit repositions the slider + template Text. Both read
-    -- back the clamped store.
+    -- Two-way mirror: slider commits repaint the readout + box, box
+    -- commits repaint the slider + readout. Both read back the
+    -- clamped store.
     local function syncTimeoutControls()
       local v = curTimeout()
-      if sl and sl.SetValue then sl:SetValue(v) end
-      showSliderVal(v)
+      if sl and sl.refresh then sl:refresh() end
+      if valFS and valFS.SetText then valFS:SetText(tostring(v) .. "s") end
       if box and box.zlRefresh then box:zlRefresh()
       elseif box and box.SetText then box:SetText(tostring(v)) end
     end
-    if sl and sl.SetScript then
-      sl:SetScript("OnValueChanged", function()
-        local v = nil
-        if sl.GetValue then
-          local ok, gv = pcall(sl.GetValue, sl)
-          if ok then v = gv end
-        end
-        if v == nil then return end
-        if MLUI and MLUI.SetRollTimeout then MLUI.SetRollTimeout(v) end
-        showSliderVal(curTimeout())
-        if box and box.zlRefresh then box:zlRefresh()
-        elseif box and box.SetText then box:SetText(tostring(curTimeout())) end
-      end)
+    -- Hook the writes: gridSlider commits through `set`, the box
+    -- through zlSet — wrap both with the repaint.
+    if sl and sl.commitAt then
+      local rawCommit = sl.commitAt
+      sl.commitAt = function(cx)
+        rawCommit(cx)
+        syncTimeoutControls()
+      end
     end
-    -- Box commits through zlSet (PYEdit); re-anchor the slider after.
     local boxSet = box and box.zlSet or nil
     if box and boxSet then
       box.zlSet = function(v)
         boxSet(v)
         syncTimeoutControls()
       end
-    end
-    if sl then
-      Tip(sl, "Roll timer", "Seconds rollers get before the roll resolves.",
-        "1..30s, default 10s. Applies to the next roll.")
-    end
-    if timerRow then
-      Tip(timerRow, "Roll timer", "Seconds rollers get before the roll resolves.",
-        "Drag the slider or type seconds (1..30, default 10s).")
-      M.setupBtns = M.setupBtns or {}
-      M.setupBtns.rollTimerRow = timerRow
     end
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.raiderFrame = b11
@@ -1794,7 +1888,7 @@ function M.RenderSetup()
         "OFF: no vote. NEED/GREED/PASS: silent background vote, no chat spam.")
       nzBtns[cat] = nb
     end
-    local b12 = fullButton(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
+    local b12 = gridSingle(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
     local function alLabel()
       if Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow() then
         return "Auto-loot below: ON"
@@ -1830,7 +1924,7 @@ function M.RenderSetup()
     -- (Clear won marks removed: header Reset rolls is the same action,
     -- no duplicates.) Single action: full-width, same outer margins
     -- as every other button so the right edge lines up.
-    local b5 = fullButton(panel, -PAD_TOP)
+    local b5 = gridSingle(panel, -PAD_TOP)
     b5:SetText("Reset all settings")
     b5:SetScript("OnClick", function() Z.RequestResetAllSettings() end)
     Tip(b5, "Reset all settings",

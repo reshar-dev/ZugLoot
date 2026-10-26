@@ -68,7 +68,7 @@ DUO_W = (COL_W - 16 - 8) // 2
 N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
-    "Rolling": BH + 8 + BH,  # template owns the row labels: no extra air
+    "Rolling": BH + 8 + 66,  # duo pair + timer cell (readout/track/captions/box)
     "Looting": BH + 8 + BH + 8 + 47,
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
@@ -184,12 +184,13 @@ for title in TITLES:
                        DUO_W, BH, bl[r + 1])
         by += ((len(bl) + 1) // 2) * (BH + 8) - 8
         if title == "Rolling":
-            # timer row: one wrapper, slider (~2/3) + box (~1/3).
+            # timer cell: readout, custom track, captions, compact
+            # box — all inside ONE duo cell under the duo pair.
             by += 8
-            rowW = COL_W - 16
-            slider(bx, by, rowW - 64 - 8, 10)
-            button(bx + rowW - 64, by - 4, 64, BH, "10")
-            by += BH
+            d.text((bx + DUO_W - 20, by), "10s", font=F_SMALL, fill=MUTE)
+            slider(bx, by + 10, DUO_W, 10)
+            button(bx + DUO_W - 64, by + 10 + 6 + 14, 64, 20, "10")
+            by += 66
         if title == "Looting":
             by += 8
             for line in LOOTING_INFO:

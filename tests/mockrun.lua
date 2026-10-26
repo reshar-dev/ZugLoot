@@ -775,46 +775,52 @@ assert(st4.rollSlider ~= nil, "roll slider built");
 assert(st4.rollBox ~= nil, "roll seconds box built");
 assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider spans 1..30");
 assert(ZugLoot.MasterLootUI.RollTimeout() == 10, "default 10s");
--- box commit clamps + repositions the slider.
+-- box commit clamps + repaints the slider (thumb fraction follows).
 st4.rollBox.zlSet("99");
 assert(Z.DB.rollTime == 30, "box clamps to max");
-assert(st4.rollSlider.val == 30, "slider follows box");
+local frMax = nil;
+if st4.rollSlider.paint then
+  -- paint returns the thumb fraction: full range => 1.
+  frMax = st4.rollSlider.paint();
+end
+assert(frMax == nil or frMax == 1, "slider follows box");
 st4.rollBox.zlSet("0");
 assert(Z.DB.rollTime == 1, "box clamps to min");
 st4.rollBox.zlSet("17");
 assert(Z.DB.rollTime == 17, "box stores seconds");
 assert(ZugLoot.MasterLootUI.RollTimeout() == 17, "timeout reads the store");
--- slider drag rewrites the box.
-st4.rollSlider.val = 25;
-st4.rollSlider:GetScript("OnValueChanged")();
+-- slider commit rewrites the box. commitAt takes a cursor x like
+-- the client drag path; the mock frame has no screen rect, so pin
+-- the geometry first (GetLeft/GetScale), then commit mid-track.
+st4.rollBox.zlSet("10");
+assert(Z.DB.rollTime == 10, "box reset");
+local wrap = st4.rollSlider.wrap;
+assert(wrap ~= nil, "slider wrap built");
+wrap.GetLeft = function() return 100 end;
+local _keepScale = UIParent and UIParent.GetScale;
+if UIParent then UIParent.GetScale = function() return 1 end end
+st4.rollSlider.commitAt(100 + math.floor(wrap.w * (25 - 1) / (30 - 1)));
+if UIParent then UIParent.GetScale = _keepScale end
 assert(Z.DB.rollTime == 25, "slider drag stores");
+assert(st4.rollBox.zlGet() == "25", "box mirrors the drag");
 -- non-numeric box input refuses (store untouched).
 Z.DB.rollTime = 25;
 st4.rollBox.zlSet("abc");
 assert(Z.DB.rollTime == 25, "garbage input keeps the store");
--- template strings: named slider exposes Low/High/Text children.
--- Headless the mock frame is anonymous, so register the template
--- globals the client would build and re-render: labels land.
-local slName = st4.rollSlider.GetName and st4.rollSlider:GetName();
-if slName then
-  for _, suf in ipairs({ "Low", "High", "Text" }) do
-    _G[slName .. suf] = { txt = "" };
-    _G[slName .. suf].SetText = function(_, s) _G[slName .. suf].txt = tostring(s) end;
-    _G[slName .. suf].GetText = function() return _G[slName .. suf].txt end;
-  end
-  getglobal = function(n) return _G[n] end;
-  Z.MainWindow.SelectTab("sheet");
-  Z.MainWindow.SelectTab("setup");
-  local st5 = Z.MainWindow.DebugSetupToggles();
-  assert(_G[slName .. "Low"].txt == "1", "template Low shows min");
-  assert(_G[slName .. "High"].txt == "30", "template High shows max");
-  assert(_G[slName .. "Text"].txt == "25s", "template Text shows value");
-  st5.rollSlider.val = 12;
-  st5.rollSlider:GetScript("OnValueChanged")();
-  assert(_G[slName .. "Text"].txt == "12s", "drag updates template Text");
-  getglobal = nil;
-  for _, suf in ipairs({ "Low", "High", "Text" }) do _G[slName .. suf] = nil end
-end
+-- custom slider internals: range kept, fraction tracks the value
+-- (25s => 24/29), commit clamps out-of-range cursor positions.
+assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider range kept");
+Z.DB.rollTime = 25;
+local f25 = st4.rollSlider.paint();
+assert(math.abs(f25 - 24/29) < 0.001, "fraction tracks value, got " .. tostring(f25));
+wrap.GetLeft = function() return 100 end;
+local ks = UIParent and UIParent.GetScale;
+if UIParent then UIParent.GetScale = function() return 1 end end
+st4.rollSlider.commitAt(100 - 50);
+assert(Z.DB.rollTime == 1, "click left of track clamps to min");
+st4.rollSlider.commitAt(100 + wrap.w + 500);
+assert(Z.DB.rollTime == 30, "click right of track clamps to max");
+if UIParent then UIParent.GetScale = ks end
 Z.DB.rollTime = nil;
 print("setup roll timer OK");
 print("setup loot toggles OK");
