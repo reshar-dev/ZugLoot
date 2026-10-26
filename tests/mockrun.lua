@@ -672,12 +672,14 @@ end
 assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
 assert(panels[3].top < panels[1].top, "Automation under Rolling");
 assert(panels[4].top < panels[2].top, "Danger zone under Looting");
--- balance: left (Looting 208 + Danger 56 + gap) vs right (Rolling 88
--- + Automation 200 + gap) — bottoms within a button height.
--- Looting content is 4x24 + 3x8 + 60 (the info block wraps 4 lines).
-local leftH = (24 + (4 * 24 + 3 * 8 + 60) + 8) + 10 + (24 + 24 + 8);
-local rightH = (24 + 56 + 8) + 10 + (24 + 168 + 8);
-assert(math.abs(leftH - rightH) <= 24, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
+-- balance: two-across everywhere shrank both columns — left
+-- (Looting 156 + Danger 56 + gap = 222) vs right (Rolling 56 +
+-- Automation 128 + gap = 194). 28px apart stays calm.
+-- Looting content is 2 pair rows + the 60px info block; Automation
+-- content is 3 auto-need rows + the auto-loot row.
+local leftH = (24 + (24 + 8 + 24 + 8 + 60) + 8) + 10 + (24 + 24 + 8);
+local rightH = (24 + 24 + 8) + 10 + (24 + (3 * 20 + 2 * 4 + 8 + 20) + 8);
+assert(math.abs(leftH - rightH) <= 32, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
 for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
@@ -715,6 +717,19 @@ do
   local pairCenter = bodyLeft + lx + pairW / 2;
   assert(math.abs(pairCenter - winCenter) <= 1, "window-centered: pair " .. tostring(pairCenter) .. " vs window " .. tostring(winCenter));
   print("setup centering OK: margin " .. tostring(lx) .. " shift " .. tostring(shift));
+end
+-- duo inset: every two-across right button must clear the panel's
+-- right edge. Mock frames record widths, so verify the geometry:
+-- PAD_SIDE + 2*duoW + 8 + PAD_SIDE == panel width (1px floor slack).
+do
+  local panelW = panels[1].panel.w; -- Rolling panel
+  local gridW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
+  local colW = math.floor((gridW - 8 - 10) / 2);
+  local duoW = math.floor((colW - 16 - 8) / 2);
+  assert(8 + 2 * duoW + 8 + 8 <= colW, "duo pair fits panel");
+  assert(colW - (8 + 2 * duoW + 8) <= 9, "right inset sane, got " .. tostring(colW - (8 + 2 * duoW + 8)));
+  assert(math.abs(panelW - colW) <= 1, "panel spans column");
+  print("setup duo inset OK: duoW " .. tostring(duoW));
 end
 -- logo-gold tint: panels share the badge gold (PAL.gold).
 local tint = Z.MainWindow.SETUP_PANEL_TINT;

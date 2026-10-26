@@ -63,13 +63,13 @@ CHROME_SHIFT = max(0, ((WIN_W - (BODY_LEFT + BODY_W)) - BODY_LEFT) // 2)
 MARGIN_X = 4 + (GRID_W - (COL_W * 2 + GAP)) // 2 + CHROME_SHIFT
 LEFT_X, RIGHT_X = MARGIN_X, MARGIN_X + COL_W + GAP
 # now that COL_W is final, derive the dependent button/grid metrics.
-HALF_BW = COL_W - 16
-TWO_ACROSS = COL_W >= 16 + BW * 2 + 8
+# Mirrors the Lua builders: duoW pairs everywhere, full-width singles.
+DUO_W = (COL_W - 16 - 8) // 2
 N_CATS = 6  # AutoRoll.CATEGORIES count
-_auto_rows = math.ceil(N_CATS / (2 if TWO_ACROSS else 1))
+_auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
-    "Rolling": BH + 8 + BH,
-    "Looting": BH + 8 + BH + 8 + BH + 8 + BH + 8 + 60,
+    "Rolling": BH,
+    "Looting": BH + 8 + BH + 8 + 60,
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,
@@ -166,22 +166,28 @@ for title in TITLES:
     d.text((x + 8, y0 + 6), title, font=F_HEAD, fill=G)
     by, bx = y0 + PAD_TOP, x + 8
     if title in ("Rolling", "Looting"):
-        for b in BUTTONS[title]:
-            button(bx, by, HALF_BW, BH, b)
-            by += BH + 8
+        # mirrors the Lua duoButton pairs: two-across, PAD_SIDE margins.
+        bl = BUTTONS[title]
+        for r in range(0, len(bl), 2):
+            button(bx, by + (r // 2) * (BH + 8), DUO_W, BH, bl[r])
+            if r + 1 < len(bl):
+                button(bx + DUO_W + 8, by + (r // 2) * (BH + 8),
+                       DUO_W, BH, bl[r + 1])
+        by += ((len(bl) + 1) // 2) * (BH + 8) - 8
         if title == "Looting":
+            by += 8
             for line in LOOTING_INFO:
                 d.text((bx, by + 2), line, font=F_SMALL, fill=MUTE)
                 by += 15
     elif title == "Automation":
-        # mirrors the Lua: one per row, full column width, at default width
         for i, c in enumerate(AUTO_CATS):
-            button(bx, by + i * (SMALL_H + 4), COL_W - 16, SMALL_H,
-                   "%s: OFF" % c)
-        by += len(AUTO_CATS) * (SMALL_H + 4) - 4 + 8
+            col, rr = i % 2, i // 2
+            button(bx + col * (DUO_W + 8), by + rr * (SMALL_H + 4),
+                   DUO_W, SMALL_H, "%s: OFF" % c)
+        by += 3 * (SMALL_H + 4) - 4 + 8
         button(bx, by, COL_W - 16, SMALL_H, "Auto-loot below: OFF")
     elif title == "Danger zone":
-        button(bx, by, BW, BH, BUTTONS[title][0])
+        button(bx, by, COL_W - 16, BH, BUTTONS[title][0])
 
 out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv \
     else os.path.join(ROOT, "preview", "setup.png")

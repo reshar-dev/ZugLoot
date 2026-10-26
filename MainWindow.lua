@@ -1458,7 +1458,7 @@ function M.RenderSetup()
   local SMALL_H = 20 -- compact (auto-need grid) button height
   local GAP = 10 -- vertical gap between panels
   local PAD_TOP, PAD_BOTTOM, PAD_SIDE = 24, 8, 8 -- heading + margins
-  local BW = 150 -- full button width (half-column buttons use halfBW)
+  -- (No single button width anymore: duoW/fullButton derive from colW.)
   local y = -52 -- top of the two-column area (below the subtitle)
   local panels = {} -- debug hook: { title, panel, top } per section
   -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
@@ -1484,26 +1484,38 @@ function M.RenderSetup()
   marginX = math.floor(x0)
   local leftX, rightX = marginX, marginX + colW + GAP
   local ly, ry = 0, 0 -- running cursors inside gridF (Members style)
-  -- Half-width button footprint: the column fits ONE 150px button
-  -- plus margins, not two — shrink so nothing clips the panel edge.
-  local halfBW = colW - PAD_SIDE * 2
-  local function halfButton(parent)
+  -- Two-across buttons inside every panel (Automation proved the
+  -- pattern): each row holds a left + right button with PAD_SIDE on
+  -- BOTH outer sides, so the right button always clears the gold
+  -- edge. Widths floor to whole pixels; the pair is left-anchored
+  -- and the leftover 1px (if any) hides in the right margin.
+  local duoW = math.floor((colW - PAD_SIDE * 2 - 8) / 2)
+  local function duoButton(parent, col, rowY, h)
     local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    btn:SetWidth(halfBW) btn:SetHeight(BH)
+    btn:SetWidth(duoW) btn:SetHeight(h or BH)
+    btn:SetPoint("TOPLEFT", parent, "TOPLEFT",
+      PAD_SIDE + col * (duoW + 8), rowY)
+    return btn
+  end
+  -- Single full-width button (Danger zone reset, auto-loot row):
+  -- same outer margins, spans the whole content width.
+  local function fullButton(parent, rowY, h)
+    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    btn:SetWidth(colW - PAD_SIDE * 2) btn:SetHeight(h or BH)
+    btn:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD_SIDE, rowY)
     return btn
   end
   -- Section 1: Rolling — auto-roll + the raider roll-window policy.
-  -- Right column, top.
+  -- Right column, top. Two-across: auto-roll | roll window.
   do
-    local contentH = BH + 8 + BH
+    local contentH = BH
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
     local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Rolling")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
-    local b3 = halfButton(panel)
-    b3:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
+    local b3 = duoButton(panel, 0, -PAD_TOP)
     if Z.CharDB and Z.CharDB.autoRoll then b3:SetText("Auto-roll: ON") else b3:SetText("Auto-roll: OFF") end
     b3:SetScript("OnClick", function()
       Z.AutoRoll.Set((Z.CharDB and Z.CharDB.autoRoll) and "off" or "on")
@@ -1514,8 +1526,7 @@ function M.RenderSetup()
     -- ML = pop for master-loot rolls (ROLL_REQ / ML roll call), group
     -- loot + solo stay shut; ALL = legacy (also mirror group-loot rolls
     -- + local preview). Same gate the window enforces at open.
-    local b11 = halfButton(panel)
-    b11:SetPoint("TOPLEFT", b3, "BOTTOMLEFT", 0, -8)
+    local b11 = duoButton(panel, 1, -PAD_TOP)
     local function rfLabel()
       if Z.DB and Z.DB.raiderFrame == "all" then return "Roll window: ALL" end
       return "Roll window: ML"
@@ -1536,23 +1547,19 @@ function M.RenderSetup()
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
   -- Section 2: Looting — loot-frame takeover + boss auto-switch flow.
-  -- Left column, top (tallest panel: anchors the column).
+  -- Left column, top. Two-across pairs: takeover | ML-on-boss /
+  -- back-to-group | threshold, then the info block underneath.
   do
-    -- takeLabel row (24) + 8 + ML row (24) + 8 + back row (24) + 8 +
-    -- threshold row (24) + the info block underneath (4 wrapped lines
-    -- at ~13px + 8 gap = 60: the simulate line wraps, and the block
-    -- must clear the bottom border instead of sitting on it).
-    local contentH = BH + 8 + BH + 8 + BH + 8 + BH + 8 + 60
+    -- pair row (24) + 8 + pair row (24) + 8 + the info block (60).
+    local contentH = BH + 8 + BH + 8 + 60
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
-    -- Looting buttons use the shared half-width footprint.
     -- Loot-frame takeover toggle (the click-to-loot kill-switch stands
     -- it down persistently; this opts back in). Same as /zl lootframe.
-    local b6 = halfButton(panel)
-    b6:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
+    local b6 = duoButton(panel, 0, -PAD_TOP)
     local function takeLabel()
       if Z.LootWindow and Z.LootWindow.TakeoverWanted() then
         return "Loot frame: ZUG"
@@ -1573,8 +1580,7 @@ function M.RenderSetup()
     -- Auto loot-method switching (ML boss flow): flip to master
     -- loot when the ML selects a boss, flip back to group loot once
     -- the boss is fully looted. Two independent toggles, off by default.
-    local b8 = halfButton(panel)
-    b8:SetPoint("TOPLEFT", b6, "BOTTOMLEFT", 0, -8)
+    local b8 = duoButton(panel, 1, -PAD_TOP)
     local function mlLabel()
       if Z.DB and Z.DB.mlOnBoss then return "ML on boss: ON" end
       return "ML on boss: OFF"
@@ -1586,8 +1592,7 @@ function M.RenderSetup()
     end)
     Tip(b8, "ML on boss", "As master looter, switch to master loot when you select a raid boss.",
       "Master looter only, raid only. Worldboss flag or 100k+ HP (trash never reaches it).")
-    local b9 = halfButton(panel)
-    b9:SetPoint("TOPLEFT", b8, "BOTTOMLEFT", 0, -8)
+    local b9 = duoButton(panel, 0, -PAD_TOP - BH - 8)
     local function grpLabel()
       if Z.DB and Z.DB.backToGroup then return "Back to group: ON" end
       return "Back to group: OFF"
@@ -1602,8 +1607,7 @@ function M.RenderSetup()
     -- Boss threshold dropdown: which loot threshold the auto-switch
     -- applies with master loot (1 common .. 4 epic). Button shows the
     -- current pick; clicking opens the 4-row choice list below it.
-    local b10 = halfButton(panel)
-    b10:SetPoint("TOPLEFT", b9, "BOTTOMLEFT", 0, -8)
+    local b10 = duoButton(panel, 1, -PAD_TOP - BH - 8)
     local function threshLabel()
       local MLUI = Z.MasterLootUI
       if MLUI and MLUI.ThresholdLabel and MLUI.BossThreshold then
@@ -1619,7 +1623,7 @@ function M.RenderSetup()
       "Roll time: " .. tostring(Z.DB and Z.DB.rollTime or 15) .. "s  (/zl time N)\n" ..
       "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)\n" ..
       "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl simraid <raid>")
-    info:SetPoint("TOPLEFT", b10, "BOTTOMLEFT", 0, -8)
+    info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8)
     info:SetWidth(colW - PAD_SIDE * 2) info:SetJustifyH("LEFT")
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.mlOnBoss = b8
@@ -1631,17 +1635,14 @@ function M.RenderSetup()
   -- Section 3: Automation — LazyPig-style auto-need votes for raid
   -- trash (per-category OFF -> NEED -> GREED -> PASS; silent
   -- background votes) + sub-threshold corpse auto-loot.
-  -- Right column, under Rolling: two-across grid when the half-width
-  -- panel fits it (balances against the tall Looting panel), else one
-  -- per row so narrow windows never clip.
+  -- Right column, under Rolling. Always two-across like every other
+  -- panel now (duoW matches the shared builder); narrow windows let
+  -- the pair shrink instead of clipping (floored, 1px hides right).
   do
     local cats = (Z.AutoRoll and Z.AutoRoll.CATEGORIES) or {}
     local nCats = Z.Util.ArrayCount(cats)
     if nCats < 1 then nCats = 1 end
-    local twoAcross = colW >= PAD_SIDE * 2 + BW * 2 + 8
-    local perRow = twoAcross and 2 or 1
-    -- Fill the column: full width single-column, split evenly two-across.
-    local autoBW = math.floor((colW - PAD_SIDE * 2 - (perRow - 1) * 8) / perRow)
+    local perRow = 2
     local nRows = math.ceil(nCats / perRow)
     -- grid (compact buttons) + 8 + the auto-loot row underneath.
     local contentH = nRows * SMALL_H + (nRows - 1) * 4 + 8 + SMALL_H
@@ -1653,12 +1654,8 @@ function M.RenderSetup()
     local nzBtns = {}
     for i = 1, Z.Util.ArrayCount(cats) do
       local cat = cats[i] -- fresh local per iteration for the closure
-      local nb = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-      nb:SetWidth(autoBW) nb:SetHeight(SMALL_H)
-      local acol = math.mod(i - 1, perRow)
-      local arow = math.floor((i - 1) / perRow)
-      nb:SetPoint("TOPLEFT", panel, "TOPLEFT",
-        PAD_SIDE + acol * (autoBW + 8), -PAD_TOP - arow * (SMALL_H + 4))
+      local nb = duoButton(panel, math.mod(i - 1, perRow),
+        -PAD_TOP - math.floor((i - 1) / perRow) * (SMALL_H + 4), SMALL_H)
       local function nzLabel()
         local v = Z.AutoRoll and Z.AutoRoll.VoteFor and Z.AutoRoll.VoteFor(cat) or nil
         local lab = Z.AutoRoll and Z.AutoRoll.VoteLabel and Z.AutoRoll.VoteLabel(v) or "OFF"
@@ -1675,9 +1672,7 @@ function M.RenderSetup()
         "OFF: no vote. NEED/GREED/PASS: silent background vote, no chat spam.")
       nzBtns[cat] = nb
     end
-    local b12 = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    b12:SetWidth(colW - PAD_SIDE * 2) b12:SetHeight(SMALL_H)
-    b12:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - contentH + SMALL_H)
+    local b12 = fullButton(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
     local function alLabel()
       if Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow() then
         return "Auto-loot below: ON"
@@ -1711,9 +1706,9 @@ function M.RenderSetup()
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
     -- (Clear won marks removed: header Reset rolls is the same action,
-    -- no duplicates.)
-    local b5 = halfButton(panel)
-    b5:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
+    -- no duplicates.) Single action: full-width, same outer margins
+    -- as every other button so the right edge lines up.
+    local b5 = fullButton(panel, -PAD_TOP)
     b5:SetText("Reset all settings")
     b5:SetScript("OnClick", function() Z.RequestResetAllSettings() end)
     Tip(b5, "Reset all settings",
