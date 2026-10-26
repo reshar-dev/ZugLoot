@@ -1441,10 +1441,14 @@ function M.RenderSetup()
   local b = bodies[key]
   local row = CreateFrame("Frame", nil, b.child)
   row:SetWidth(BODY_WIDTH)
+  -- Centered grid (computed below): title/subtitle align to its left
+  -- edge so the whole tab shares one axis. Declared here (Lua locals
+  -- bind at declaration) and filled before the sections place panels.
+  local marginX = 4
   local t = FS(row, "GameFontNormalLarge", "Import & options")
-  t:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
+  t:SetPoint("TOPLEFT", row, "TOPLEFT", marginX, -6)
   local sub = FS(row, "GameFontHighlightSmall", "Role: " .. Z.SRSecurity.RoleLabel() .. " — only the master looter may broadcast sheets.")
-  sub:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -28)
+  sub:SetPoint("TOPLEFT", row, "TOPLEFT", marginX, -28)
   sub:SetWidth(BODY_WIDTH - 16) sub:SetJustifyH("LEFT")
   -- Buttons are built into per-section content frames, then each
   -- section is wrapped in a rounded gold panel. Absolute Y inside a
@@ -1458,9 +1462,20 @@ function M.RenderSetup()
   local y = -52 -- top of the two-column area (below the subtitle)
   local panels = {} -- debug hook: { title, panel, top } per section
   -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
-  -- Automation. Column width splits the row minus the gutter.
-  local colW = math.floor((BODY_WIDTH - 8 - GAP) / 2)
-  local leftX, rightX = 4, 4 + colW + GAP
+  -- Automation. The grid is centered: equal side margins, so the
+  -- content has the same padding left and right.
+  local gridW = BODY_WIDTH - 8 -- full grid width (title spans the same)
+  -- Even column pair, centered: drop the 1px slack (if any) instead of
+  -- flooring, so left and right margins are always identical.
+  local colW = math.floor((gridW - GAP) / 2)
+  local pairW = colW * 2 + GAP
+  if (gridW - pairW) == 1 then colW = colW + 1 pairW = colW * 2 + GAP end
+  -- Integral offsets only: a 3.5px axis would blur every child frame
+  -- on the 1.12 client, so the 1px slack (if any) goes right (margins
+  -- 4 vs 5 — invisible) instead of splitting 3.5/3.5.
+  local slack = gridW - pairW
+  marginX = 4 + math.floor(slack / 2)
+  local leftX, rightX = marginX, marginX + colW + GAP
   local ly, ry = y, y -- running cursors per column
   -- Half-width button footprint: the column fits ONE 150px button
   -- plus margins, not two — shrink so nothing clips the panel edge.

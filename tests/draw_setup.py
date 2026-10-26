@@ -37,18 +37,8 @@ BW = 150
 TITLES = [m.group(1).strip().split("—")[0].strip()
           for m in re.finditer(r"-- Section \d+: ([^\n]+)", SRC)]
 
-# column width mirrors the Lua: floor((BODY_WIDTH - 8 - GAP) / 2)
-COL_W = (BODY_W - 8 - GAP) // 2
-HALF_BW = COL_W - 16
-TWO_ACROSS = COL_W >= 16 + BW * 2 + 8
-N_CATS = 6  # AutoRoll.CATEGORIES count
-auto_rows = math.ceil(N_CATS / (2 if TWO_ACROSS else 1))
-CONTENT = {
-    "Rolling": BH + 8 + BH,
-    "Looting": BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48,
-    "Automation": auto_rows * SMALL_H + (auto_rows - 1) * 4 + 8 + SMALL_H,
-    "Danger zone": BH,
-}
+# Column metrics mirror the Lua centering (computed in the GRID_W
+# block below from the same BODY_WIDTH/GAP the addon uses).
 
 BUTTONS = {
     "Rolling": ["Auto-roll: ON", "Roll window: ML"],
@@ -61,7 +51,26 @@ AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
 LOOTING_INFO = ["Roll time: 15s  (/zl time N)", "Drops logged: 0  (/zl log)",
                 "Simulate: /zl sim <link> — /zl simboss — /zl simraid"]
 
-LEFT_X, RIGHT_X = 14, 14 + COL_W + GAP
+GRID_W = BODY_W - 8
+# COL_W recomputed here (drop 1px slack) to mirror the Lua centering.
+COL_W = (GRID_W - GAP) // 2
+if GRID_W - (COL_W * 2 + GAP) == 1:
+    COL_W += 1  # drop the 1px slack (mirrors Lua)
+# integral offsets only: leftover slack goes right (mirrors Lua).
+MARGIN_X = 4 + (GRID_W - (COL_W * 2 + GAP)) // 2
+LEFT_X, RIGHT_X = MARGIN_X, MARGIN_X + COL_W + GAP
+# now that COL_W is final, derive the dependent button/grid metrics.
+HALF_BW = COL_W - 16
+TWO_ACROSS = COL_W >= 16 + BW * 2 + 8
+N_CATS = 6  # AutoRoll.CATEGORIES count
+_auto_rows = math.ceil(N_CATS / (2 if TWO_ACROSS else 1))
+CONTENT = {
+    "Rolling": BH + 8 + BH,
+    "Looting": BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48,
+    "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
+                     + 8 + SMALL_H),
+    "Danger zone": BH,
+}
 panels = {}  # title -> (x, top, w, h)
 ly = ry = 52
 for t in ["Rolling", "Looting", "Automation"]:

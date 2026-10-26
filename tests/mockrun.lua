@@ -681,6 +681,26 @@ for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
 end
+-- centering: left column edge and right column edge sit at equal
+-- margins — same padding on both sides. Mock frames record SetPoint
+-- args, so read the panel anchors back.
+do
+  local pts = panels[2].panel.points; -- Looting = left column
+  local lx = nil;
+  for _, p in ipairs(pts or {}) do
+    if p[1] == "TOPLEFT" and type(p[4]) == "number" then lx = p[4]; break end
+  end
+  local ptsR = panels[1].panel.points; -- Rolling = right column
+  local rx, rw = nil, panels[1].panel.w;
+  for _, p in ipairs(ptsR or {}) do
+    if p[1] == "TOPLEFT" and type(p[4]) == "number" then rx = p[4]; break end
+  end
+  assert(lx ~= nil and rx ~= nil and rw ~= nil, "panel anchors readable");
+  local bodyW = Z.MainWindow.DebugLayout and Z.MainWindow.DebugLayout().bodyWidth or 596;
+  local rightMargin = bodyW - (rx + rw);
+  assert(math.abs(lx - rightMargin) <= 1, "centered: left " .. tostring(lx) .. " vs right " .. tostring(rightMargin));
+  print("setup centering OK: margin " .. tostring(lx));
+end
 -- logo-gold tint: panels share the badge gold (PAL.gold).
 local tint = Z.MainWindow.SETUP_PANEL_TINT;
 assert(tint ~= nil and tint[1] == 1.0 and tint[2] == 0.82 and tint[3] == 0.0,
