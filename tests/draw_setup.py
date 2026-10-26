@@ -49,7 +49,8 @@ BUTTONS = {
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
              "Corrupted Sand", "Dream shards", "Naxx scraps"]
 LOOTING_INFO = ["Roll time: 15s  (/zl time N)", "Drops logged: 0  (/zl log)",
-                "Simulate: /zl sim <link> — /zl simboss — /zl simraid"]
+                "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl",
+                'simraid <raid>']
 
 GRID_W = BODY_W - 8
 # Members-tab formula verbatim: floor the column, pair offset = full
@@ -64,7 +65,7 @@ N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / (2 if TWO_ACROSS else 1))
 CONTENT = {
     "Rolling": BH + 8 + BH,
-    "Looting": BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48,
+    "Looting": BH + 8 + BH + 8 + BH + 8 + BH + 8 + 60,
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,

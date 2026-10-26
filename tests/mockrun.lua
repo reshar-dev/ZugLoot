@@ -674,7 +674,8 @@ assert(panels[3].top < panels[1].top, "Automation under Rolling");
 assert(panels[4].top < panels[2].top, "Danger zone under Looting");
 -- balance: left (Looting 208 + Danger 56 + gap) vs right (Rolling 88
 -- + Automation 200 + gap) — bottoms within a button height.
-local leftH = (24 + 176 + 8) + 10 + (24 + 24 + 8);
+-- Looting content is 4x24 + 3x8 + 60 (the info block wraps 4 lines).
+local leftH = (24 + (4 * 24 + 3 * 8 + 60) + 8) + 10 + (24 + 24 + 8);
 local rightH = (24 + 56 + 8) + 10 + (24 + 168 + 8);
 assert(math.abs(leftH - rightH) <= 24, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
 for i = 1, 4 do

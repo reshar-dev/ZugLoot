@@ -1534,8 +1534,10 @@ function M.RenderSetup()
   -- Left column, top (tallest panel: anchors the column).
   do
     -- takeLabel row (24) + 8 + ML row (24) + 8 + back row (24) + 8 +
-    -- threshold row (24) + the info block (~44) underneath.
-    local contentH = BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48
+    -- threshold row (24) + the info block underneath (4 wrapped lines
+    -- at ~13px + 8 gap = 60: the simulate line wraps, and the block
+    -- must clear the bottom border instead of sitting on it).
+    local contentH = BH + 8 + BH + 8 + BH + 8 + BH + 8 + 60
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
