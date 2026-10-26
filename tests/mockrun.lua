@@ -660,6 +660,25 @@ print("raids delete button OK");
 Z.DB.mlOnBoss = false;
 Z.DB.backToGroup = false;
 Z.MainWindow.SelectTab("setup");
+-- setup panels: sorted categories, one rounded gold panel each.
+local panels = Z.MainWindow.DebugSetupPanels();
+assert(panels ~= nil and #panels == 4, "four setup panels, got: " .. tostring(panels and #panels));
+local wantTitles = { "Rolling", "Looting", "Automation", "Danger zone" };
+for i = 1, 4 do
+  assert(panels[i].title == wantTitles[i], "panel " .. i .. " sorted: " .. tostring(panels[i].title));
+end
+for i = 2, 4 do
+  assert(panels[i].top < panels[i-1].top, "panel " .. i .. " stacks below panel " .. (i-1));
+end
+for i = 1, 4 do
+  local pn = panels[i].panel;
+  assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
+end
+-- logo-gold tint: panels share the badge gold (PAL.gold).
+local tint = Z.MainWindow.SETUP_PANEL_TINT;
+assert(tint ~= nil and tint[1] == 1.0 and tint[2] == 0.82 and tint[3] == 0.0,
+  "panel tint is the logo gold");
+print("setup panels OK");
 local st = Z.MainWindow.DebugSetupToggles();
 assert(st.mlOnBoss ~= nil, "ML on boss toggle built");
 assert(st.backToGroup ~= nil, "Back to group toggle built");
