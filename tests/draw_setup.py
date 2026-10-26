@@ -52,11 +52,9 @@ LOOTING_INFO = ["Roll time: 15s  (/zl time N)", "Drops logged: 0  (/zl log)",
                 "Simulate: /zl sim <link> — /zl simboss — /zl simraid"]
 
 GRID_W = BODY_W - 8
-# COL_W recomputed here (drop 1px slack) to mirror the Lua centering.
+# Members-tab formula verbatim: floor the column, pair offset = full
+# margins + half the remainder (integral: floor the 1px slack).
 COL_W = (GRID_W - GAP) // 2
-if GRID_W - (COL_W * 2 + GAP) == 1:
-    COL_W += 1  # drop the 1px slack (mirrors Lua)
-# integral offsets only: leftover slack goes right (mirrors Lua).
 MARGIN_X = 4 + (GRID_W - (COL_W * 2 + GAP)) // 2
 LEFT_X, RIGHT_X = MARGIN_X, MARGIN_X + COL_W + GAP
 # now that COL_W is final, derive the dependent button/grid metrics.

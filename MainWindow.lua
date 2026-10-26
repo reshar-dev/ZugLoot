@@ -1462,21 +1462,23 @@ function M.RenderSetup()
   local y = -52 -- top of the two-column area (below the subtitle)
   local panels = {} -- debug hook: { title, panel, top } per section
   -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
-  -- Automation. The grid is centered: equal side margins, so the
-  -- content has the same padding left and right.
-  local gridW = BODY_WIDTH - 8 -- full grid width (title spans the same)
-  -- Even column pair, centered: drop the 1px slack (if any) instead of
-  -- flooring, so left and right margins are always identical.
-  local colW = math.floor((gridW - GAP) / 2)
+  -- Automation. Centering follows the Members tab: one invisible
+  -- full-width frame (gridF) holds both columns, and the pair is
+  -- centered inside it with the same x0 formula Members uses — the
+  -- pair can never drift off-axis whatever the window width is.
+  local colW = math.floor((BODY_WIDTH - 8 - GAP) / 2)
   local pairW = colW * 2 + GAP
-  if (gridW - pairW) == 1 then colW = colW + 1 pairW = colW * 2 + GAP end
-  -- Integral offsets only: a 3.5px axis would blur every child frame
-  -- on the 1.12 client, so the 1px slack (if any) goes right (margins
-  -- 4 vs 5 — invisible) instead of splitting 3.5/3.5.
-  local slack = gridW - pairW
-  marginX = 4 + math.floor(slack / 2)
+  local gridF = CreateFrame("Frame", nil, row)
+  gridF:SetWidth(BODY_WIDTH)
+  gridF:SetPoint("TOPLEFT", row, "TOPLEFT", 0, y)
+  -- Members-tab formula verbatim: full-bleed margins (4 + ...) with
+  -- the pair remainder split inside. Integral offsets only (1.12 has
+  -- no sub-pixel frames): the 1px slack on odd widths folds into the
+  -- left margin (4 vs 5 — invisible, never a 3.5 blur).
+  local x0 = 4 + (BODY_WIDTH - 8 - pairW) / 2
+  marginX = math.floor(x0)
   local leftX, rightX = marginX, marginX + colW + GAP
-  local ly, ry = y, y -- running cursors per column
+  local ly, ry = 0, 0 -- running cursors inside gridF (Members style)
   -- Half-width button footprint: the column fits ONE 150px button
   -- plus margins, not two — shrink so nothing clips the panel edge.
   local halfBW = colW - PAD_SIDE * 2
@@ -1490,8 +1492,8 @@ function M.RenderSetup()
   do
     local contentH = BH + 8 + BH
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
-    local panel = M.SetupPanel(row, colW, panelH)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", rightX, ry)
+    local panel = M.SetupPanel(gridF, colW, panelH)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Rolling")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1534,8 +1536,8 @@ function M.RenderSetup()
     -- takeLabel row (24) + 8 + ML row (24) + 8 + back row (24) + 8 +
     -- threshold row (24) + the info block (~44) underneath.
     local contentH = BH + 8 + BH + 8 + BH + 8 + BH + 8 + 48
-    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", leftX, ly)
+    local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1636,8 +1638,8 @@ function M.RenderSetup()
     local nRows = math.ceil(nCats / perRow)
     -- grid (compact buttons) + 8 + the auto-loot row underneath.
     local contentH = nRows * SMALL_H + (nRows - 1) * 4 + 8 + SMALL_H
-    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", rightX, ry)
+    local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Automation")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1696,8 +1698,8 @@ function M.RenderSetup()
   -- Automation (~298) — bottoms 8px apart, no dead space, no footer.
   do
     local contentH = BH
-    local panel = M.SetupPanel(row, colW, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", row, "TOPLEFT", leftX, ly)
+    local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Danger zone")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1712,8 +1714,9 @@ function M.RenderSetup()
       "Confirmation window first. Local data only — anyone can use it.")
     table.insert(panels, { title = "Danger zone", panel = panel, top = ly })
     ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
-    -- Row height = bottom of the deeper column (2x2 grid, no footer).
+    -- gridF wraps the pair (Members pattern): height = deeper column.
     local bottomY = (ly < ry) and ly or ry
+    gridF:SetHeight(-bottomY + GAP)
     row:SetHeight(-(bottomY + GAP) + 52)
     M.setupPanels = panels
     TrackRow(key, row, (-(bottomY + GAP) + 52))

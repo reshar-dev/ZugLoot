@@ -64,7 +64,7 @@ local function newObj(kind)
   function o:GetFrameLevel() return self.flevel or 5 end
   return o;
 end
-CreateFrame = function(kind, name, parent, tmpl) return newObj(kind) end
+CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; return o end
 UIParent = newObj("Frame");
 GameTooltip = newObj("Tooltip");
 function GameTooltip:SetOwner() end; function GameTooltip:SetText() end; function GameTooltip:AddLine() end; function GameTooltip:Show() end; function GameTooltip:Hide() end; function GameTooltip:SetHyperlink() end
@@ -681,9 +681,10 @@ for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
 end
--- centering: left column edge and right column edge sit at equal
--- margins — same padding on both sides. Mock frames record SetPoint
--- args, so read the panel anchors back.
+-- centering (Members pattern): the pair lives in one invisible
+-- full-width frame (gridF) and the pair offset inside it equals the
+-- right remainder — same padding both sides. Mock frames record
+-- SetPoint args, so verify the pair offset against the pair width.
 do
   local pts = panels[2].panel.points; -- Looting = left column
   local lx = nil;
@@ -696,9 +697,14 @@ do
     if p[1] == "TOPLEFT" and type(p[4]) == "number" then rx = p[4]; break end
   end
   assert(lx ~= nil and rx ~= nil and rw ~= nil, "panel anchors readable");
-  local bodyW = Z.MainWindow.DebugLayout and Z.MainWindow.DebugLayout().bodyWidth or 596;
-  local rightMargin = bodyW - (rx + rw);
-  assert(math.abs(lx - rightMargin) <= 1, "centered: left " .. tostring(lx) .. " vs right " .. tostring(rightMargin));
+  assert(rx - lx > 200, "right column sits right of left, got " .. tostring(rx - lx));
+  local pairW = (rx - lx) + rw; -- left offset + gap + right width
+  -- gridF is full body width: left offset == right remainder means
+  -- centered. Read gridF's own width (not the live BODY_WIDTH, which
+  -- may have moved on after render) via the left panel's parent.
+  local gridW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
+  local rightRemainder = gridW - (lx + pairW);
+  assert(math.abs(lx - rightRemainder) <= 1, "centered: left " .. tostring(lx) .. " vs right " .. tostring(rightRemainder));
   print("setup centering OK: margin " .. tostring(lx));
 end
 -- logo-gold tint: panels share the badge gold (PAL.gold).
