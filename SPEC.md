@@ -322,7 +322,14 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
   PAGING: the client shows ~5 slots per loot page, but `GetNumLootItems`
   reports the WHOLE corpse — `ScanCorpse` reads slots 1..n, so one open
   lists every page and the drop announce names every roll item with no
-  re-loot. Blizzard's `LootFrame`
+  re-loot. Every slot read is pcall-guarded: a slot that ERRORS reads
+  as empty, never aborts the scan mid-list (an abort strands the
+  window half-built — the multi-page lockup). Partial scans still
+  list, and the list converges as slots collapse into view: each
+  LOOT_SLOT_CLEARED rescan appends newly readable slots, so a
+  page-gated client drains across waves with no re-loot. A reported-
+  vs-readable gap logs under `/zl lootdebug` (`M.lastScanGap`) for
+  post-raid diagnosis. Blizzard's `LootFrame`
   is DETACHED session-wide (RollFor `main.lua:on_player_login` parity:
   `UnregisterAllEvents` + `OnHide` stripped at `ADDON_LOADED`, re-armed
   per `LOOT_OPENED`) — one-shot hiding is NOT enough, FrameXML re-shows
