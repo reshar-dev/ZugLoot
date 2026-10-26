@@ -1462,20 +1462,25 @@ function M.RenderSetup()
   local y = -52 -- top of the two-column area (below the subtitle)
   local panels = {} -- debug hook: { title, panel, top } per section
   -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
-  -- Automation. Centering follows the Members tab: one invisible
-  -- full-width frame (gridF) holds both columns, and the pair is
-  -- centered inside it with the same x0 formula Members uses — the
-  -- pair can never drift off-axis whatever the window width is.
+  -- Automation. One invisible wrapper (gridF) holds both columns so
+  -- the pair moves as a unit. It is centered against the VISIBLE
+  -- window — not the scroll body: the body (winW-64 at +14) leaves
+  -- 14px chrome left but ~50px right (dead zone + scrollbar slot +
+  -- border), so body-centering sits ~18px left of window center.
+  -- Shifting the pair right by half that gutter (BODY_LEFT/2 + the
+  -- scrollbar slot) lands it on the true window axis at every size.
   local colW = math.floor((BODY_WIDTH - 8 - GAP) / 2)
   local pairW = colW * 2 + GAP
   local gridF = CreateFrame("Frame", nil, row)
   gridF:SetWidth(BODY_WIDTH)
   gridF:SetPoint("TOPLEFT", row, "TOPLEFT", 0, y)
-  -- Members-tab formula verbatim: full-bleed margins (4 + ...) with
-  -- the pair remainder split inside. Integral offsets only (1.12 has
-  -- no sub-pixel frames): the 1px slack on odd widths folds into the
-  -- left margin (4 vs 5 — invisible, never a 3.5 blur).
-  local x0 = 4 + (BODY_WIDTH - 8 - pairW) / 2
+  -- Members-tab remainder split (integral: floor the 1px slack) +
+  -- the window-axis correction. Both halves floor to whole pixels
+  -- (1.12 has no sub-pixel frames).
+  local winW = (M.winW and M.winW > 200) and M.winW or (BODY_WIDTH + 64)
+  local chromeShift = math.floor(((winW - (BODY_LEFT + BODY_WIDTH)) - BODY_LEFT) / 2)
+  if chromeShift < 0 then chromeShift = 0 end
+  local x0 = 4 + (BODY_WIDTH - 8 - pairW) / 2 + chromeShift
   marginX = math.floor(x0)
   local leftX, rightX = marginX, marginX + colW + GAP
   local ly, ry = 0, 0 -- running cursors inside gridF (Members style)

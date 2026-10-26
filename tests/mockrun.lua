@@ -700,13 +700,21 @@ do
   assert(lx ~= nil and rx ~= nil and rw ~= nil, "panel anchors readable");
   assert(rx - lx > 200, "right column sits right of left, got " .. tostring(rx - lx));
   local pairW = (rx - lx) + rw; -- left offset + gap + right width
-  -- gridF is full body width: left offset == right remainder means
-  -- centered. Read gridF's own width (not the live BODY_WIDTH, which
-  -- may have moved on after render) via the left panel's parent.
+  -- The pair targets the WINDOW axis, not the body: it sits right of
+  -- body-center by the chrome shift. Recompute the shift from the
+  -- same inputs RenderSetup used (BODY_WIDTH at render = gridF's
+  -- own width; winW falls back to body+64 headless) and expect the
+  -- pair center to land on the window center within 1px.
   local gridW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
-  local rightRemainder = gridW - (lx + pairW);
-  assert(math.abs(lx - rightRemainder) <= 1, "centered: left " .. tostring(lx) .. " vs right " .. tostring(rightRemainder));
-  print("setup centering OK: margin " .. tostring(lx));
+  local bodyW = gridW; -- gridF is full body width
+  local winW = (Z.MainWindow.winW and Z.MainWindow.winW > 200) and Z.MainWindow.winW or (bodyW + 64);
+  local bodyLeft = 14; -- BODY_LEFT: scroll body inset in the window
+  local shift = math.floor(((winW - (bodyLeft + bodyW)) - bodyLeft) / 2);
+  if shift < 0 then shift = 0 end
+  local winCenter = winW / 2;
+  local pairCenter = bodyLeft + lx + pairW / 2;
+  assert(math.abs(pairCenter - winCenter) <= 1, "window-centered: pair " .. tostring(pairCenter) .. " vs window " .. tostring(winCenter));
+  print("setup centering OK: margin " .. tostring(lx) .. " shift " .. tostring(shift));
 end
 -- logo-gold tint: panels share the badge gold (PAL.gold).
 local tint = Z.MainWindow.SETUP_PANEL_TINT;

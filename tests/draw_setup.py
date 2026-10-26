@@ -53,10 +53,14 @@ LOOTING_INFO = ["Roll time: 15s  (/zl time N)", "Drops logged: 0  (/zl log)",
                 'simraid <raid>']
 
 GRID_W = BODY_W - 8
-# Members-tab formula verbatim: floor the column, pair offset = full
-# margins + half the remainder (integral: floor the 1px slack).
+# Members-tab remainder split + the window-axis chrome shift
+# (mirrors RenderSetup: body sits +14 in winW, pair shifts right by
+# half the L/R chrome difference so it lands on the window axis).
 COL_W = (GRID_W - GAP) // 2
-MARGIN_X = 4 + (GRID_W - (COL_W * 2 + GAP)) // 2
+WIN_W = BODY_W + 64
+BODY_LEFT = 14
+CHROME_SHIFT = max(0, ((WIN_W - (BODY_LEFT + BODY_W)) - BODY_LEFT) // 2)
+MARGIN_X = 4 + (GRID_W - (COL_W * 2 + GAP)) // 2 + CHROME_SHIFT
 LEFT_X, RIGHT_X = MARGIN_X, MARGIN_X + COL_W + GAP
 # now that COL_W is final, derive the dependent button/grid metrics.
 HALF_BW = COL_W - 16
