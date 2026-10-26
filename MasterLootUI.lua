@@ -1574,12 +1574,39 @@ end
 
 function M.TrySetLoot(method, masterName)
   if not SetLootMethod then return false end
+  -- pcall's first return is the success flag: restamp only then.
   if method == "master" then
-    local ok = pcall(SetLootMethod, "master", masterName)
-    return ok and true or false
+    if pcall(SetLootMethod, "master", masterName) then
+      M.RestampMethod(method)
+      return true
+    end
+    return false
   end
-  local ok = pcall(SetLootMethod, method)
-  return ok and true or false
+  if pcall(SetLootMethod, method) then
+    M.RestampMethod(method)
+    return true
+  end
+  return false
+end
+-- Our own auto-switch just changed the method (boss target ->
+-- master, finished list -> group): the session is NOT flipped, so
+-- re-stamp every live row + the open roll to the new method.
+-- Without this the loot-method guard mistakes our own switch for a
+-- hostile flip and refuses rolls on pre-switch rows (the reported
+-- "blocks rolls even though nobody changed anything"). External
+-- flips never pass through here, so they still trip the guard.
+function M.RestampMethod(method)
+  if method == nil then return end
+  if Z.LootWindow and Z.LootWindow.items then
+    for i = 1, Z.Util.ArrayCount(Z.LootWindow.items) do
+      local it = Z.LootWindow.items[i]
+      if it and it.source ~= "sim" then it.lootMethod = method end
+    end
+  end
+  if M.roll and M.roll.mode ~= "SIM" then
+    M.roll.method = method
+    M.roll.methodWarned = nil -- fresh method: intake resumes quietly
+  end
 end
 
 function M.CurrentLootMethod()

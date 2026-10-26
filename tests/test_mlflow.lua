@@ -981,6 +981,56 @@ ZugLoot.DB.autoLootBelow = true
 ML.lootOpen = false
 eq(ML.AutoLootFree(), 0, "closed corpse takes nothing")
 ZugLoot.DB.autoLootBelow = nil
+-- 19. Own auto-switch never trips the guard (false-positive hunt):
+-- trash scanned under group, OUR boss switch to master, roll must
+-- start; flip-back restamps; a REAL external flip still refuses.
+resetHarness()
+liveMethod = "group"
+ZugLoot.SRSecurity.LootMethod = function() return liveMethod end
+grouping = "raid"
+GetLootMethod = function() return liveMethod end
+SetLootMethod = function(m) liveMethod = m return true end
+GetMasterLootCandidate = function(_slot, i)
+  if i == 1 then return "Aaa" end
+  if i == 2 then return "Bbb" end
+end
+GiveMasterLoot = function() return true end
+UnitExists = function(u) return u == "target" end
+UnitClassification = function(u) return "worldboss" end
+ZugLoot.DB.mlOnBoss = true
+ZugLoot.DB.backToGroup = true
+ZugLoot.DB.sheet.items[1002] = { quality = 4, rollers = { { name = "Aaa", rolls = 1 } } }
+lootSlots = { { link = "item:1002:0:0:0", quality = 4 } }
+ML.OnLootOpened()
+eq(LW.Find(1002).lootMethod, "group", "row stamped at scan")
+ok(ML.MaybeMasterOnBoss(), "own auto-switch fires")
+eq(liveMethod, "master", "method is master now")
+eq(LW.Find(1002).lootMethod, "master", "switch restamps the row")
+LW.OpenDetail(1002)
+eq(LW.doAction(1002, "roll"), "rolling", "roll starts after own switch")
+eq(ML.roll.method, "master", "roll stamped master")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+eq(#ML.roll.rolls, 1, "roll lands after own switch")
+eq(LW.doAction(1002, "finish"), "finished", "finish works after own switch")
+eq(ML.Award(1002, "Aaa", "raid"), true, "award works after own switch")
+eq(liveMethod, "group", "empty list flips back to group")
+eq(ML.RefuseWhenFrozen(1002), false, "nothing to refuse on a gone row")
+-- Fresh trash under the flipped-back group loot rolls clean.
+lootSlots = { { link = "item:1003:0:0:0", quality = 3 } }
+ZugLoot.DB.sheet.items[1003] = { quality = 3, rollers = { { name = "Aaa", rolls = 1 } } }
+ML.OnLootOpened()
+LW.OpenDetail(1003)
+eq(LW.doAction(1003, "roll"), "rolling", "trash rolls after flip-back")
+-- And a REAL external flip mid-roll still freezes everything.
+liveMethod = "master"
+ML.IntakeChatRoll("Aaa rolls 50 (1-100)")
+eq(#ML.roll.rolls, 0, "intake parked on external flip")
+eq(ML.Award(1003, "Aaa", "raid"), false, "award refuses on external flip")
+UnitExists = nil
+UnitClassification = nil
+SetLootMethod = nil
+ZugLoot.DB.mlOnBoss = false
+ZugLoot.DB.backToGroup = false
 GetLootMethod = nil
 GetMasterLootCandidate = nil
 ZugLoot.SRSecurity.LootMethod = nil
