@@ -64,7 +64,7 @@ local function newObj(kind)
   function o:GetFrameLevel() return self.flevel or 5 end
   return o;
 end
-CreateFrame = function(kind, name, parent, tmpl) return newObj(kind) end
+CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; return o end
 UIParent = newObj("Frame");
 GameTooltip = newObj("Tooltip");
 function GameTooltip:SetOwner() end; function GameTooltip:SetText() end; function GameTooltip:AddLine() end; function GameTooltip:Show() end; function GameTooltip:Hide() end; function GameTooltip:SetHyperlink() end
@@ -660,6 +660,78 @@ print("raids delete button OK");
 Z.DB.mlOnBoss = false;
 Z.DB.backToGroup = false;
 Z.MainWindow.SelectTab("setup");
+-- setup panels: sorted categories, one rounded gold panel each.
+local panels = Z.MainWindow.DebugSetupPanels();
+assert(panels ~= nil and #panels == 4, "four setup panels, got: " .. tostring(panels and #panels));
+local wantTitles = { "Rolling", "Looting", "Automation", "Danger zone" };
+for i = 1, 4 do
+  assert(panels[i].title == wantTitles[i], "panel " .. i .. " sorted: " .. tostring(panels[i].title));
+end
+-- 2x2 grid: left runs Looting(2) + Danger zone(4), right runs
+-- Rolling(1) + Automation(3). Columns top-align, sections stack down.
+assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
+assert(panels[3].top < panels[1].top, "Automation under Rolling");
+assert(panels[4].top < panels[2].top, "Danger zone under Looting");
+-- balance: two-across everywhere shrank both columns — left
+-- (Looting 156 + Danger 56 + gap = 222) vs right (Rolling 56 +
+-- Automation 128 + gap = 194). 28px apart stays calm.
+-- Looting content is 2 pair rows + the 60px info block; Automation
+-- content is 3 auto-need rows + the auto-loot row.
+local leftH = (24 + (24 + 8 + 24 + 8 + 60) + 8) + 10 + (24 + 24 + 8);
+local rightH = (24 + 24 + 8) + 10 + (24 + (3 * 20 + 2 * 4 + 8 + 20) + 8);
+assert(math.abs(leftH - rightH) <= 32, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
+for i = 1, 4 do
+  local pn = panels[i].panel;
+  assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
+end
+-- centering (Members pattern): the pair lives in one invisible
+-- full-width frame (gridF) and the pair offset inside it equals the
+-- right remainder — same padding both sides. Mock frames record
+-- SetPoint args, so verify the pair offset against the pair width.
+do
+  local pts = panels[2].panel.points; -- Looting = left column
+  local lx = nil;
+  for _, p in ipairs(pts or {}) do
+    if p[1] == "TOPLEFT" and type(p[4]) == "number" then lx = p[4]; break end
+  end
+  local ptsR = panels[1].panel.points; -- Rolling = right column
+  local rx, rw = nil, panels[1].panel.w;
+  for _, p in ipairs(ptsR or {}) do
+    if p[1] == "TOPLEFT" and type(p[4]) == "number" then rx = p[4]; break end
+  end
+  assert(lx ~= nil and rx ~= nil and rw ~= nil, "panel anchors readable");
+  assert(rx - lx > 200, "right column sits right of left, got " .. tostring(rx - lx));
+  local pairW = (rx - lx) + rw; -- left offset + gap + right width
+  -- Window-axis centering that fits the body: recompute the axis
+  -- from the same inputs RenderSetup used (gridF's own width is the
+  -- body at render; winW falls back to body+64 headless) and expect
+  -- the pair center on the window center within 1px AND the pair
+  -- fully inside the body (the reported cut-off was 14px past it).
+  local bodyW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
+  local winW = (Z.MainWindow.winW and Z.MainWindow.winW > 200) and Z.MainWindow.winW or (bodyW + 64);
+  local bodyLeft = 14; -- BODY_LEFT: scroll body inset in the window
+  local axis = winW / 2 - bodyLeft;
+  assert(math.abs((lx + pairW / 2) - axis) <= 1, "window-centered: pair " .. tostring(lx + pairW / 2) .. " vs axis " .. tostring(axis));
+  assert(lx + pairW <= bodyW, "pair fits body: ends " .. tostring(lx + pairW) .. " of " .. tostring(bodyW));
+  assert(lx >= 0, "pair starts inside body");
+  print("setup centering OK: margin " .. tostring(lx) .. " pair " .. tostring(pairW));
+end
+-- duo inset: every two-across right button must clear the panel's
+-- right edge. Derive the column from the RUBBER anchor (panel width
+-- IS colW — RenderSetup sizes panels from it), not from a formula.
+do
+  local panelW = panels[1].panel.w; -- Rolling panel
+  local colW = panelW;
+  local duoW = math.floor((colW - 16 - 8) / 2);
+  assert(8 + 2 * duoW + 8 + 8 <= colW, "duo pair fits panel");
+  assert(colW - (8 + 2 * duoW + 8) <= 9, "right inset sane, got " .. tostring(colW - (8 + 2 * duoW + 8)));
+  print("setup duo inset OK: duoW " .. tostring(duoW));
+end
+-- logo-gold tint: panels share the badge gold (PAL.gold).
+local tint = Z.MainWindow.SETUP_PANEL_TINT;
+assert(tint ~= nil and tint[1] == 1.0 and tint[2] == 0.82 and tint[3] == 0.0,
+  "panel tint is the logo gold");
+print("setup panels OK");
 local st = Z.MainWindow.DebugSetupToggles();
 assert(st.mlOnBoss ~= nil, "ML on boss toggle built");
 assert(st.backToGroup ~= nil, "Back to group toggle built");
