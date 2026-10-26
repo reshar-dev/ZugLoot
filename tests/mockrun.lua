@@ -64,7 +64,7 @@ local function newObj(kind)
   function o:GetFrameLevel() return self.flevel or 5 end
   return o;
 end
-CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; return o end
+CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; o.fname = name; function o:GetName() return self.fname end; return o end
 UIParent = newObj("Frame");
 GameTooltip = newObj("Tooltip");
 function GameTooltip:SetOwner() end; function GameTooltip:SetText() end; function GameTooltip:AddLine() end; function GameTooltip:Show() end; function GameTooltip:Hide() end; function GameTooltip:SetHyperlink() end
@@ -792,6 +792,29 @@ assert(Z.DB.rollTime == 25, "slider drag stores");
 Z.DB.rollTime = 25;
 st4.rollBox.zlSet("abc");
 assert(Z.DB.rollTime == 25, "garbage input keeps the store");
+-- template strings: named slider exposes Low/High/Text children.
+-- Headless the mock frame is anonymous, so register the template
+-- globals the client would build and re-render: labels land.
+local slName = st4.rollSlider.GetName and st4.rollSlider:GetName();
+if slName then
+  for _, suf in ipairs({ "Low", "High", "Text" }) do
+    _G[slName .. suf] = { txt = "" };
+    _G[slName .. suf].SetText = function(_, s) _G[slName .. suf].txt = tostring(s) end;
+    _G[slName .. suf].GetText = function() return _G[slName .. suf].txt end;
+  end
+  getglobal = function(n) return _G[n] end;
+  Z.MainWindow.SelectTab("sheet");
+  Z.MainWindow.SelectTab("setup");
+  local st5 = Z.MainWindow.DebugSetupToggles();
+  assert(_G[slName .. "Low"].txt == "1", "template Low shows min");
+  assert(_G[slName .. "High"].txt == "30", "template High shows max");
+  assert(_G[slName .. "Text"].txt == "25s", "template Text shows value");
+  st5.rollSlider.val = 12;
+  st5.rollSlider:GetScript("OnValueChanged")();
+  assert(_G[slName .. "Text"].txt == "12s", "drag updates template Text");
+  getglobal = nil;
+  for _, suf in ipairs({ "Low", "High", "Text" }) do _G[slName .. suf] = nil end
+end
 Z.DB.rollTime = nil;
 print("setup roll timer OK");
 print("setup loot toggles OK");

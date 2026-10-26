@@ -1511,10 +1511,11 @@ function M.RenderSetup()
   -- Section 1: Rolling — auto-roll + the raider roll-window policy +
   -- the roll timer (slider 1..30s with an editable seconds box).
   -- Right column, top. Two-across: auto-roll | roll window, then the
-  -- timer row (slider left, value box right) underneath. +6 air for
-  -- the 1s/30s captions hanging below the slider.
+  -- timer row (template slider left, value box right) underneath.
+  -- The template owns the row's labels (Low/High/Text) — no extra
+  -- caption air needed.
   do
-    local contentH = BH + 8 + BH + 6
+    local contentH = BH + 8 + BH
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
     local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
@@ -1558,27 +1559,37 @@ function M.RenderSetup()
     local loT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
     local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
     local sliderW = duoW
-    -- OptionsSliderTemplate ships its own Low/High/Text strings that
-    -- collide with our captions into mush — blank them, keep only our
-    -- short "1" / "30" end captions below.
-    local sl = CreateFrame("Slider", nil, panel, "OptionsSliderTemplate")
+    -- The template owns this row's labels: <Name>Low / <Name>High
+    -- are the range ends, <Name>Text is the live value. Name the
+    -- slider so the template builds them, then drive them — no custom
+    -- caption frames needed. Headless (anonymous mock frames): the
+    -- lookup misses and the row degrades to slider + box, still
+    -- fully testable through min/max/value.
+    local sl = CreateFrame("Slider", "ZugLootRollTimer", panel, "OptionsSliderTemplate")
+    local function templStr(suffix)
+      if sl and sl.GetName and getglobal then
+        local okN, sname = pcall(sl.GetName, sl)
+        if okN and type(sname) == "string" then
+          local okG, g = pcall(getglobal, sname .. suffix)
+          if okG and g then return g end
+        end
+      end
+      return nil
+    end
+    local function showSliderVal(v)
+      local textF = templStr("Text")
+      if textF and textF.SetText then pcall(textF.SetText, textF, tostring(v) .. "s") end
+    end
     if sl then
       sl:SetWidth(sliderW) sl:SetHeight(16)
       sl:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8)
       if sl.SetMinMaxValues then sl:SetMinMaxValues(loT, hiT) end
       if sl.SetValueStep then sl:SetValueStep(1) end
       if sl.SetValue then sl:SetValue(curTimeout()) end
-      -- Template Low/High/Text strings live in globals named after
-      -- the slider frame (nil for our anonymous slider: guarded).
-      if sl.GetName and getglobal then
-        local okN, sname = pcall(sl.GetName, sl)
-        if okN and type(sname) == "string" then
-          for _, region in ipairs({ "Low", "High", "Text" }) do
-            local okG, g = pcall(getglobal, sname .. region)
-            if okG and g and g.SetText then pcall(g.SetText, g, "") end
-          end
-        end
-      end
+      local lowF, highF = templStr("Low"), templStr("High")
+      if lowF and lowF.SetText then pcall(lowF.SetText, lowF, tostring(loT)) end
+      if highF and highF.SetText then pcall(highF.SetText, highF, tostring(hiT)) end
+      showSliderVal(curTimeout())
     end
     -- Compact value box: fits "30" + padding, right-aligned in its
     -- slot so the panel's right inset holds and the bar stops
@@ -1594,11 +1605,13 @@ function M.RenderSetup()
         -PAD_SIDE, -PAD_TOP - BH - 8)
       if box.SetJustifyH then box:SetJustifyH("CENTER") end
     end
-    -- Two-way mirror: slider drag rewrites the box, box commit
-    -- repositions the slider. Both read back the clamped store.
+    -- Two-way mirror: slider drag rewrites the box + template Text,
+    -- box commit repositions the slider + template Text. Both read
+    -- back the clamped store.
     local function syncTimeoutControls()
       local v = curTimeout()
       if sl and sl.SetValue then sl:SetValue(v) end
+      showSliderVal(v)
       if box and box.zlRefresh then box:zlRefresh()
       elseif box and box.SetText then box:SetText(tostring(v)) end
     end
@@ -1611,6 +1624,7 @@ function M.RenderSetup()
         end
         if v == nil then return end
         if MLUI and MLUI.SetRollTimeout then MLUI.SetRollTimeout(v) end
+        showSliderVal(curTimeout())
         if box and box.zlRefresh then box:zlRefresh()
         elseif box and box.SetText then box:SetText(tostring(curTimeout())) end
       end)
@@ -1624,12 +1638,6 @@ function M.RenderSetup()
       end
     end
     if sl then
-      -- Short end captions ("1" / "30") under the slider ends,
-      -- tucked inside the slider width so they never touch gold.
-      local loFS = FS(sl, "GameFontHighlightSmall", tostring(loT))
-      if loFS.SetPoint then loFS:SetPoint("TOPLEFT", sl, "BOTTOMLEFT", 2, -2) end
-      local hiFS = FS(sl, "GameFontHighlightSmall", tostring(hiT))
-      if hiFS.SetPoint then hiFS:SetPoint("TOPRIGHT", sl, "BOTTOMRIGHT", -2, -2) end
       Tip(sl, "Roll timer", "Seconds rollers get before the roll resolves.",
         "1..30s, default 10s. Applies to the next roll.")
     end

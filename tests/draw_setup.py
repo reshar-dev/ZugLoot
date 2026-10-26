@@ -68,7 +68,7 @@ DUO_W = (COL_W - 16 - 8) // 2
 N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
-    "Rolling": BH + 8 + BH + 6,
+    "Rolling": BH + 8 + BH,  # template owns the row labels: no extra air
     "Looting": BH + 8 + BH + 8 + 47,
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
