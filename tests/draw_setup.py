@@ -156,9 +156,9 @@ def slider(x, y, w, cur=10, lo=1, hi=30):
     d.line([x, y + 8, x + w, y + 8], fill=(120, 122, 130))
     fx = x + (cur - lo) / max(1, hi - lo) * w
     d.ellipse([fx - 5, y + 3, fx + 5, y + 13], fill=G)
-    d.text((x, y + 16), "%ds" % lo, font=F_SMALL, fill=MUTE)
-    tw = d.textlength("%ds" % hi, font=F_SMALL)
-    d.text((x + w - tw, y + 16), "%ds" % hi, font=F_SMALL, fill=MUTE)
+    d.text((x + 2, y + 16), "%d" % lo, font=F_SMALL, fill=MUTE)
+    tw = d.textlength("%d" % hi, font=F_SMALL)
+    d.text((x + w - tw - 2, y + 16), "%d" % hi, font=F_SMALL, fill=MUTE)
 
 
 def button(x, y, w, h, label):
@@ -184,10 +184,10 @@ for title in TITLES:
                        DUO_W, BH, bl[r + 1])
         by += ((len(bl) + 1) // 2) * (BH + 8) - 8
         if title == "Rolling":
-            # timer row: slider left, editable seconds box right.
+            # timer row: slider left, compact seconds box right.
             by += 8
             slider(bx, by, DUO_W, 10)
-            button(bx + DUO_W + 8, by - 4, DUO_W, BH, "10")
+            button(bx + DUO_W + 8 + (DUO_W - 64), by - 4, 64, BH, "10")
             by += BH
         if title == "Looting":
             by += 8

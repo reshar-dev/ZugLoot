@@ -1558,7 +1558,9 @@ function M.RenderSetup()
     local loT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
     local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
     local sliderW = duoW
-    local boxW = duoW
+    -- OptionsSliderTemplate ships its own Low/High/Text strings that
+    -- collide with our captions into mush — blank them, keep only our
+    -- short "1" / "30" end captions below.
     local sl = CreateFrame("Slider", nil, panel, "OptionsSliderTemplate")
     if sl then
       sl:SetWidth(sliderW) sl:SetHeight(16)
@@ -1566,15 +1568,31 @@ function M.RenderSetup()
       if sl.SetMinMaxValues then sl:SetMinMaxValues(loT, hiT) end
       if sl.SetValueStep then sl:SetValueStep(1) end
       if sl.SetValue then sl:SetValue(curTimeout()) end
+      -- Template Low/High/Text strings live in globals named after
+      -- the slider frame (nil for our anonymous slider: guarded).
+      if sl.GetName and getglobal then
+        local okN, sname = pcall(sl.GetName, sl)
+        if okN and type(sname) == "string" then
+          for _, region in ipairs({ "Low", "High", "Text" }) do
+            local okG, g = pcall(getglobal, sname .. region)
+            if okG and g and g.SetText then pcall(g.SetText, g, "") end
+          end
+        end
+      end
     end
+    -- Compact value box: fits "30" + padding, right-aligned in its
+    -- slot so the panel's right inset holds and the bar stops
+    -- dominating the row.
+    local boxW = 64
     local box = PYEdit(panel, boxW, BH,
       function() return tostring(curTimeout()) end,
       function(v)
         if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
       end, "roll timeout")
     if box and box.SetPoint then
-      box:SetPoint("TOPLEFT", panel, "TOPLEFT",
-        PAD_SIDE + duoW + 8, -PAD_TOP - BH - 8)
+      box:SetPoint("TOPRIGHT", panel, "TOPRIGHT",
+        -PAD_SIDE, -PAD_TOP - BH - 8)
+      if box.SetJustifyH then box:SetJustifyH("CENTER") end
     end
     -- Two-way mirror: slider drag rewrites the box, box commit
     -- repositions the slider. Both read back the clamped store.
@@ -1606,11 +1624,11 @@ function M.RenderSetup()
       end
     end
     if sl then
-      -- Low/high captions under the slider ends (1s / 30s), tucked
-    -- inside the slider width so they never touch the gold edge.
-      local loFS = FS(sl, "GameFontHighlightSmall", tostring(loT) .. "s")
+      -- Short end captions ("1" / "30") under the slider ends,
+      -- tucked inside the slider width so they never touch gold.
+      local loFS = FS(sl, "GameFontHighlightSmall", tostring(loT))
       if loFS.SetPoint then loFS:SetPoint("TOPLEFT", sl, "BOTTOMLEFT", 2, -2) end
-      local hiFS = FS(sl, "GameFontHighlightSmall", tostring(hiT) .. "s")
+      local hiFS = FS(sl, "GameFontHighlightSmall", tostring(hiT))
       if hiFS.SetPoint then hiFS:SetPoint("TOPRIGHT", sl, "BOTTOMRIGHT", -2, -2) end
       Tip(sl, "Roll timer", "Seconds rollers get before the roll resolves.",
         "1..30s, default 10s. Applies to the next roll.")
