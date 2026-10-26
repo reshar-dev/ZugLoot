@@ -64,7 +64,7 @@ local function newObj(kind)
   function o:GetFrameLevel() return self.flevel or 5 end
   return o;
 end
-CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; return o end
+CreateFrame = function(kind, name, parent, tmpl) local o = newObj(kind); o.parent = parent; o.fname = name; function o:GetName() return self.fname end; return o end
 UIParent = newObj("Frame");
 GameTooltip = newObj("Tooltip");
 function GameTooltip:SetOwner() end; function GameTooltip:SetText() end; function GameTooltip:AddLine() end; function GameTooltip:Show() end; function GameTooltip:Hide() end; function GameTooltip:SetHyperlink() end
@@ -672,14 +672,10 @@ end
 assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
 assert(panels[3].top < panels[1].top, "Automation under Rolling");
 assert(panels[4].top < panels[2].top, "Danger zone under Looting");
--- balance: two-across everywhere shrank both columns — left
--- (Looting 156 + Danger 56 + gap = 222) vs right (Rolling 56 +
--- Automation 128 + gap = 194). 28px apart stays calm.
--- Looting content is 2 pair rows + the 60px info block; Automation
--- content is 3 auto-need rows + the auto-loot row.
-local leftH = (24 + (24 + 8 + 24 + 8 + 60) + 8) + 10 + (24 + 24 + 8);
-local rightH = (24 + 24 + 8) + 10 + (24 + (3 * 20 + 2 * 4 + 8 + 20) + 8);
-assert(math.abs(leftH - rightH) <= 32, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
+-- ordering: each column stacks downward without overlap; the row
+-- height fits the deeper column. (Absolute heights vary by width —
+-- the auto-need grid goes two-across wider up and the timer row adds
+-- a row to Rolling — so pin the order, not hard numbers.)
 for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
@@ -771,6 +767,52 @@ assert(string.find(st3.raiderFrame.label or "", "ALL", 1, true) ~= nil, "roll-wi
 st3.raiderFrame:GetScript("OnClick")();
 assert(Z.DB.raiderFrame == "ml", "roll-window toggle flips back to ML");
 Z.DB.raiderFrame = nil;
+-- roll timer: custom slider + readout, no text box (readout shows it).
+Z.DB.rollTime = nil;
+Z.MainWindow.SelectTab("setup");
+local st4 = Z.MainWindow.DebugSetupToggles();
+assert(st4.rollSlider ~= nil, "roll slider built");
+assert(st4.rollReadout ~= nil, "roll readout built");
+assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider spans 1..30");
+assert(ZugLoot.MasterLootUI.RollTimeout() == 10, "default 10s");
+assert(st4.rollReadout.txt == "10s", "readout shows default");
+-- slider commit stores + repaints the readout through onChange
+-- (the old bug: drags bypassed the outer wrapper, readout froze).
+-- commitAt takes a cursor x like the client drag path; the mock
+-- frame has no screen rect, so pin the geometry first.
+local wrap = st4.rollSlider.wrap;
+assert(wrap ~= nil, "slider wrap built");
+wrap.GetLeft = function() return 100 end;
+local _keepScale = UIParent and UIParent.GetScale;
+if UIParent then UIParent.GetScale = function() return 1 end end
+st4.rollSlider.commitAt(100 + math.floor(wrap.w * (25 - 1) / (30 - 1)));
+if UIParent then UIParent.GetScale = _keepScale end
+assert(Z.DB.rollTime == 25, "slider drag stores");
+assert(st4.rollReadout.txt == "25s", "readout follows the drag");
+-- custom slider internals: range kept, fraction tracks the value
+-- (25s => 24/29), commit clamps out-of-range cursor positions.
+assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider range kept");
+Z.DB.rollTime = 25;
+local f25 = st4.rollSlider.paint();
+assert(math.abs(f25 - 24/29) < 0.001, "fraction tracks value, got " .. tostring(f25));
+wrap.GetLeft = function() return 100 end;
+local ks = UIParent and UIParent.GetScale;
+if UIParent then UIParent.GetScale = function() return 1 end end
+st4.rollSlider.commitAt(100 - 50);
+assert(Z.DB.rollTime == 1, "click left of track clamps to min");
+assert(st4.rollReadout.txt == "1s", "readout follows clamp");
+st4.rollSlider.commitAt(100 + wrap.w + 500);
+assert(Z.DB.rollTime == 30, "click right of track clamps to max");
+-- scaled client: UI scale 0.8, cursor raw px, frame left UI units.
+-- Clicking the 30-end (raw 0.8*(100+w)) must read 30, not drift.
+if UIParent then UIParent.GetScale = function() return 0.8 end end
+st4.rollSlider.commitAt(0.8 * (100 + wrap.w));
+assert(Z.DB.rollTime == 30, "scaled click at max reads max");
+st4.rollSlider.commitAt(0.8 * 100);
+assert(Z.DB.rollTime == 1, "scaled click at min reads min");
+if UIParent then UIParent.GetScale = ks end
+Z.DB.rollTime = nil;
+print("setup roll timer OK");
 print("setup loot toggles OK");
 -- scrollbar invariant, checked on every tab: a visible slider may only belong
 -- to the active tab. Hidden tabs must never paint a thumb (the old bug left

@@ -388,7 +388,7 @@ end
 function M.ShowItem(itemLink, seconds)
   if not M.MayShow(false) then return false end
   if not frame then M.Build() end
-  duration = seconds or (Z.DB and Z.DB.rollTime) or 15
+  duration = seconds or (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15
   timeLeft = duration
   lastSec = -1
   ClearRolls()
@@ -418,7 +418,7 @@ function M.OnRoll(player, roll, rtype, excluded)
     minR = minR, maxR = maxR, excluded = excluded,
     class = M.PlayerClass(player) })
   RenderRolls()
-  timeLeft = (Z.DB and Z.DB.rollTime) or 15 -- refresh on activity (LootBlare parity)
+  timeLeft = (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15 -- refresh on activity (LootBlare parity)
 end
 
 -- Dice vote: group-roll mirror votes Need/Greed/Pass through Blizzard's
@@ -440,7 +440,7 @@ function M.OnRollReq(msg, sender)
   -- ROLL_REQ:<itemID>:<link>:<mode>; verify sender is ML (LootBlare rule).
   local link = string.match(msg, "ROLL_REQ:%d+:(.+):%w+$")
   if Z.SRSecurity.IsML(sender) or sender == nil then
-    M.ShowItem(link or msg, (Z.DB and Z.DB.rollTime) or 15)
+    M.ShowItem(link or msg, (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15)
   end
 end
 
@@ -491,7 +491,7 @@ function M.OnEvent(event, a1, a2)
     -- never pops the frame by default).
     local item = M.MatchRollCall(a1, a2)
     if item ~= "" then
-      M.ShowItem(item, (Z.DB and Z.DB.rollTime) or 15)
+      M.ShowItem(item, (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15)
     end
   elseif event == "START_LOOT_ROLL" then
     -- a1 = rollID (1.12 passes the roll id as first arg). LazyPig-style
@@ -540,6 +540,11 @@ function M.Hide()
 end
 
 function M.SetTime(n)
+  if Z.MasterLootUI and Z.MasterLootUI.SetRollTimeout then
+    local v = Z.MasterLootUI.SetRollTimeout(n)
+    if v then Z.Print("Roll time set to " .. v .. "s") end
+    return v
+  end
   if n and n > 0 then Z.DB.rollTime = n Z.Print("Roll time set to " .. n .. "s") end
 end
 

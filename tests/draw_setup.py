@@ -48,7 +48,7 @@ BUTTONS = {
 }
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
              "Corrupted Sand", "Dream shards", "Naxx scraps"]
-LOOTING_INFO = ["Roll time: 15s  (/zl time N)", "Drops logged: 0  (/zl log)",
+LOOTING_INFO = ["Drops logged: 0  (/zl log)",
                 "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl",
                 'simraid <raid>']
 
@@ -68,8 +68,8 @@ DUO_W = (COL_W - 16 - 8) // 2
 N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
-    "Rolling": BH,
-    "Looting": BH + 8 + BH + 8 + 60,
+    "Rolling": BH + 8 + 45,  # duo pair + timer cell (readout/track/captions)
+    "Looting": BH + 8 + BH + 8 + 47,
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,
@@ -152,6 +152,15 @@ def rounded_panel(x0, y0, x1, y1, tint_a=TINT_A, edge_a=EDGE_A):
         d.ellipse([cx - 2, cy - 2, cx + 1, cy + 1], fill=edge)
 
 
+def slider(x, y, w, cur=10, lo=1, hi=30):
+    d.line([x, y + 8, x + w, y + 8], fill=(120, 122, 130))
+    fx = x + (cur - lo) / max(1, hi - lo) * w
+    d.ellipse([fx - 5, y + 3, fx + 5, y + 13], fill=G)
+    d.text((x + 2, y + 16), "%d" % lo, font=F_SMALL, fill=MUTE)
+    tw = d.textlength("%d" % hi, font=F_SMALL)
+    d.text((x + w - tw - 2, y + 16), "%d" % hi, font=F_SMALL, fill=MUTE)
+
+
 def button(x, y, w, h, label):
     d.rectangle([x, y, x + w, y + h], outline=(120, 122, 130), width=1)
     d.rectangle([x + 1, y + 1, x + w - 1, y + h - 1], fill=(40, 42, 52))
@@ -174,6 +183,14 @@ for title in TITLES:
                 button(bx + DUO_W + 8, by + (r // 2) * (BH + 8),
                        DUO_W, BH, bl[r + 1])
         by += ((len(bl) + 1) // 2) * (BH + 8) - 8
+        if title == "Rolling":
+            # timer cell: readout + custom track + captions in ONE
+            # duo cell under the duo pair (no text box: readout
+            # shows the value).
+            by += 8
+            d.text((bx + DUO_W - 20, by), "10s", font=F_SMALL, fill=MUTE)
+            slider(bx, by + 10, DUO_W, 10)
+            by += 45
         if title == "Looting":
             by += 8
             for line in LOOTING_INFO:
