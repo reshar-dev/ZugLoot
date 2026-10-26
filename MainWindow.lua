@@ -1817,7 +1817,7 @@ function M.RenderSetup()
       if MLUI and MLUI.ThresholdLabel and MLUI.BossThreshold then
         return "Threshold: " .. MLUI.ThresholdLabel(MLUI.BossThreshold())
       end
-      return "Threshold: Epic (4)"
+      return "Threshold: Uncommon (2)"
     end
     b10:SetText(threshLabel())
     b10:SetScript("OnClick", function() M.ToggleThresholdDropdown(b10) end)

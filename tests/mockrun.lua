@@ -738,12 +738,13 @@ assert(string.find(st.mlOnBoss.label or "", "ON", 1, true) ~= nil, "ML toggle re
 st.backToGroup:GetScript("OnClick")();
 assert(Z.DB.backToGroup == true, "group toggle flips the flag");
 -- boss threshold dropdown: button shows the pick, 4 rows, click stores.
-Z.DB.bossThreshold = 4;
+Z.DB.bossThreshold = nil;
 Z.MainWindow.SelectTab("setup");
 local st2 = Z.MainWindow.DebugSetupToggles();
 assert(st2.bossThreshold ~= nil, "threshold button built");
-assert(string.find(st2.bossThreshold.label or "", "Epic", 1, true) ~= nil,
-  "threshold button shows the pick, got: " .. tostring(st2.bossThreshold.label));
+assert(string.find(st2.bossThreshold.label or "", "Uncommon", 1, true) ~= nil,
+  "threshold button defaults to uncommon, got: " .. tostring(st2.bossThreshold.label));
+Z.DB.bossThreshold = 4;
 Z.MainWindow.ToggleThresholdDropdown(st2.bossThreshold);
 assert(Z.MainWindow.threshDropdown ~= nil, "threshold dropdown opened");
 assert(#Z.MainWindow.threshDropdown.rows == 4, "four threshold rows");

@@ -1679,7 +1679,7 @@ end
 function M.BossThreshold()
   local n = Z.DB and tonumber(Z.DB.bossThreshold) or nil
   if n and n >= 1 and n <= 4 then return math.floor(n) end
-  return 4 -- default: bosses drop epics, threshold follows
+  return 2 -- default: uncommon (green+ rolls, grey does not)
 end
 function M.ThresholdLabel(n)
   n = tonumber(n)
@@ -1687,7 +1687,7 @@ function M.ThresholdLabel(n)
     local t = M.THRESHOLDS[i]
     if t.value == n then return t.label .. " (" .. t.value .. ")" end
   end
-  return "Epic (4)"
+  return "Uncommon (2)"
 end
 -- Validated setter: stores the preference (1-4). Anything else refuses.
 -- Applies live ONLY through the boss auto-switch, never here.

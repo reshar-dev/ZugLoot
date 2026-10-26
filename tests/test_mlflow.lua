@@ -588,9 +588,11 @@ eq(ZugLoot.DB.bossThreshold, 3, "refusals keep rare")
 eq(ML.BossThreshold(), 3, "setter read back")
 eq(ML.ThresholdLabel(1), "Common (1)", "common labeled")
 ZugLoot.DB.bossThreshold = 99
-eq(ML.BossThreshold(), 4, "out-of-range falls back to epic")
+eq(ML.BossThreshold(), 2, "out-of-range falls back to uncommon")
 ZugLoot.DB.bossThreshold = nil
-eq(ML.BossThreshold(), 4, "absent falls back to epic")
+eq(ML.BossThreshold(), 2, "absent falls back to uncommon")
+eq(ML.ThresholdLabel(nil), "Uncommon (2)", "unknown labeled uncommon")
+eq(ML.ThresholdLabel(99), "Uncommon (2)", "out-of-range labeled uncommon")
 -- Applied on switch, restored on switch-back.
 ZugLoot.DB.bossThreshold = 4
 local threshCalls = {}

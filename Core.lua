@@ -89,8 +89,9 @@ function Z.InitDB()
   if ZugLootDB.mlOnBoss == nil then ZugLootDB.mlOnBoss = false end
   if ZugLootDB.backToGroup == nil then ZugLootDB.backToGroup = false end
   -- Boss threshold for the auto-switch (Setup dropdown, 1 common ..
-  -- 4 epic). Default epic: bosses drop epics. Absent = default.
-  if ZugLootDB.bossThreshold == nil then ZugLootDB.bossThreshold = 4 end
+  -- 4 epic). Default uncommon: green+ rolls, grey does not.
+  -- Absent = default.
+  if ZugLootDB.bossThreshold == nil then ZugLootDB.bossThreshold = 2 end
   -- LazyPig-style auto-need per trash category (Setup tab): nil = OFF,
   -- 1 = NEED, 2 = GREED, 0 = PASS. LazyPig-parity default: SAND needs
   -- (Corrupted Sand auto-roll); everything else off. Absent = off.
