@@ -184,10 +184,11 @@ for title in TITLES:
                        DUO_W, BH, bl[r + 1])
         by += ((len(bl) + 1) // 2) * (BH + 8) - 8
         if title == "Rolling":
-            # timer row: slider left, compact seconds box right.
+            # timer row: one wrapper, slider (~2/3) + box (~1/3).
             by += 8
-            slider(bx, by, DUO_W, 10)
-            button(bx + DUO_W + 8 + (DUO_W - 64), by - 4, 64, BH, "10")
+            rowW = COL_W - 16
+            slider(bx, by, rowW - 64 - 8, 10)
+            button(bx + rowW - 64, by - 4, 64, BH, "10")
             by += BH
         if title == "Looting":
             by += 8

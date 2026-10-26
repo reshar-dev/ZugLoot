@@ -1558,14 +1558,29 @@ function M.RenderSetup()
     end
     local loT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
     local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
-    local sliderW = duoW
+    -- One wrapper owns the whole timer row: template slider (~2/3,
+    -- left) + compact value box (~1/3, right). The wrapper spans the
+    -- full content width so both controls stay inside the gold with
+    -- normal margins — the template's bleed never reaches the edge.
+    local timerRow = CreateFrame("Frame", nil, panel)
+    if timerRow then
+      timerRow:SetWidth(colW - PAD_SIDE * 2)
+      timerRow:SetHeight(BH)
+      timerRow:SetPoint("TOPLEFT", panel, "TOPLEFT",
+        PAD_SIDE, -PAD_TOP - BH - 8)
+    end
+    local tParent = timerRow or panel
+    local tOff = (timerRow ~= nil) and 0 or (PAD_SIDE)
+    local tTop = (timerRow ~= nil) and 0 or (-PAD_TOP - BH - 8)
+    local tW = colW - PAD_SIDE * 2
+    local sliderW = tW - 64 - 8 -- box takes ~1/3, slider the rest
     -- The template owns this row's labels: <Name>Low / <Name>High
     -- are the range ends, <Name>Text is the live value. Name the
     -- slider so the template builds them, then drive them — no custom
     -- caption frames needed. Headless (anonymous mock frames): the
     -- lookup misses and the row degrades to slider + box, still
     -- fully testable through min/max/value.
-    local sl = CreateFrame("Slider", "ZugLootRollTimer", panel, "OptionsSliderTemplate")
+    local sl = CreateFrame("Slider", "ZugLootRollTimer", tParent, "OptionsSliderTemplate")
     local function templStr(suffix)
       if sl and sl.GetName and getglobal then
         local okN, sname = pcall(sl.GetName, sl)
@@ -1582,7 +1597,7 @@ function M.RenderSetup()
     end
     if sl then
       sl:SetWidth(sliderW) sl:SetHeight(16)
-      sl:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8)
+      sl:SetPoint("TOPLEFT", tParent, "TOPLEFT", tOff, tTop + math.floor((BH - 16) / 2))
       if sl.SetMinMaxValues then sl:SetMinMaxValues(loT, hiT) end
       if sl.SetValueStep then sl:SetValueStep(1) end
       if sl.SetValue then sl:SetValue(curTimeout()) end
@@ -1591,18 +1606,15 @@ function M.RenderSetup()
       if highF and highF.SetText then pcall(highF.SetText, highF, tostring(hiT)) end
       showSliderVal(curTimeout())
     end
-    -- Compact value box: fits "30" + padding, right-aligned in its
-    -- slot so the panel's right inset holds and the bar stops
-    -- dominating the row.
-    local boxW = 64
-    local box = PYEdit(panel, boxW, BH,
+    -- Compact value box (~1/3 of the row): fits "30" + padding,
+    -- right-aligned in the wrapper so the panel inset holds.
+    local box = PYEdit(tParent, 64, BH,
       function() return tostring(curTimeout()) end,
       function(v)
         if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
       end, "roll timeout")
     if box and box.SetPoint then
-      box:SetPoint("TOPRIGHT", panel, "TOPRIGHT",
-        -PAD_SIDE, -PAD_TOP - BH - 8)
+      box:SetPoint("TOPRIGHT", tParent, "TOPRIGHT", 0, tTop)
       if box.SetJustifyH then box:SetJustifyH("CENTER") end
     end
     -- Two-way mirror: slider drag rewrites the box + template Text,
@@ -1640,6 +1652,12 @@ function M.RenderSetup()
     if sl then
       Tip(sl, "Roll timer", "Seconds rollers get before the roll resolves.",
         "1..30s, default 10s. Applies to the next roll.")
+    end
+    if timerRow then
+      Tip(timerRow, "Roll timer", "Seconds rollers get before the roll resolves.",
+        "Drag the slider or type seconds (1..30, default 10s).")
+      M.setupBtns = M.setupBtns or {}
+      M.setupBtns.rollTimerRow = timerRow
     end
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.raiderFrame = b11
