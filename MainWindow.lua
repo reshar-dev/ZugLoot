@@ -1584,7 +1584,7 @@ function M.RenderSetup()
         fill:SetPoint("BOTTOMRIGHT", host, "TOPLEFT", fx, trackY - trackH)
       end
       if thumb and thumb.SetPoint then
-        thumb:ClearAllPoints()
+        if thumb.ClearAllPoints then thumb:ClearAllPoints() end
         thumb:SetPoint("CENTER", host, "TOPLEFT", fx, trackY - math.floor(trackH / 2))
       end
       return f
