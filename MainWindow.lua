@@ -1469,19 +1469,22 @@ function M.RenderSetup()
   -- border), so body-centering sits ~18px left of window center.
   -- Shifting the pair right by half that gutter (BODY_LEFT/2 + the
   -- scrollbar slot) lands it on the true window axis at every size.
-  local colW = math.floor((BODY_WIDTH - 8 - GAP) / 2)
-  local pairW = colW * 2 + GAP
   local gridF = CreateFrame("Frame", nil, row)
   gridF:SetWidth(BODY_WIDTH)
   gridF:SetPoint("TOPLEFT", row, "TOPLEFT", 0, y)
-  -- Members-tab remainder split (integral: floor the 1px slack) +
-  -- the window-axis correction. Both halves floor to whole pixels
-  -- (1.12 has no sub-pixel frames).
+  -- Window-axis centering that always fits INSIDE the scroll body
+  -- (it clips at BODY_WIDTH): the pair center sits exactly on the
+  -- window center, and the pair is at most as wide as the smaller
+  -- side allows — the 1px slack floors (1.12 has no sub-pixel
+  -- frames). 7px/column narrower at 900px winW; duo labels still
+  -- clear it (longest ~135px vs ~189px buttons).
   local winW = (M.winW and M.winW > 200) and M.winW or (BODY_WIDTH + 64)
-  local chromeShift = math.floor(((winW - (BODY_LEFT + BODY_WIDTH)) - BODY_LEFT) / 2)
-  if chromeShift < 0 then chromeShift = 0 end
-  local x0 = 4 + (BODY_WIDTH - 8 - pairW) / 2 + chromeShift
-  marginX = math.floor(x0)
+  local axis = winW / 2 - BODY_LEFT -- window center in body coords
+  local half = math.min(axis, BODY_WIDTH - axis)
+  if half < 0 then half = 0 end
+  local colW = math.floor((half * 2 - GAP) / 2)
+  local pairW = colW * 2 + GAP
+  marginX = math.floor(axis - pairW / 2)
   local leftX, rightX = marginX, marginX + colW + GAP
   local ly, ry = 0, 0 -- running cursors inside gridF (Members style)
   -- Two-across buttons inside every panel (Automation proved the

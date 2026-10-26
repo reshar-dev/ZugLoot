@@ -702,33 +702,29 @@ do
   assert(lx ~= nil and rx ~= nil and rw ~= nil, "panel anchors readable");
   assert(rx - lx > 200, "right column sits right of left, got " .. tostring(rx - lx));
   local pairW = (rx - lx) + rw; -- left offset + gap + right width
-  -- The pair targets the WINDOW axis, not the body: it sits right of
-  -- body-center by the chrome shift. Recompute the shift from the
-  -- same inputs RenderSetup used (BODY_WIDTH at render = gridF's
-  -- own width; winW falls back to body+64 headless) and expect the
-  -- pair center to land on the window center within 1px.
-  local gridW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
-  local bodyW = gridW; -- gridF is full body width
+  -- Window-axis centering that fits the body: recompute the axis
+  -- from the same inputs RenderSetup used (gridF's own width is the
+  -- body at render; winW falls back to body+64 headless) and expect
+  -- the pair center on the window center within 1px AND the pair
+  -- fully inside the body (the reported cut-off was 14px past it).
+  local bodyW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
   local winW = (Z.MainWindow.winW and Z.MainWindow.winW > 200) and Z.MainWindow.winW or (bodyW + 64);
   local bodyLeft = 14; -- BODY_LEFT: scroll body inset in the window
-  local shift = math.floor(((winW - (bodyLeft + bodyW)) - bodyLeft) / 2);
-  if shift < 0 then shift = 0 end
-  local winCenter = winW / 2;
-  local pairCenter = bodyLeft + lx + pairW / 2;
-  assert(math.abs(pairCenter - winCenter) <= 1, "window-centered: pair " .. tostring(pairCenter) .. " vs window " .. tostring(winCenter));
-  print("setup centering OK: margin " .. tostring(lx) .. " shift " .. tostring(shift));
+  local axis = winW / 2 - bodyLeft;
+  assert(math.abs((lx + pairW / 2) - axis) <= 1, "window-centered: pair " .. tostring(lx + pairW / 2) .. " vs axis " .. tostring(axis));
+  assert(lx + pairW <= bodyW, "pair fits body: ends " .. tostring(lx + pairW) .. " of " .. tostring(bodyW));
+  assert(lx >= 0, "pair starts inside body");
+  print("setup centering OK: margin " .. tostring(lx) .. " pair " .. tostring(pairW));
 end
 -- duo inset: every two-across right button must clear the panel's
--- right edge. Mock frames record widths, so verify the geometry:
--- PAD_SIDE + 2*duoW + 8 + PAD_SIDE == panel width (1px floor slack).
+-- right edge. Derive the column from the RUBBER anchor (panel width
+-- IS colW — RenderSetup sizes panels from it), not from a formula.
 do
   local panelW = panels[1].panel.w; -- Rolling panel
-  local gridW = (panels[2].panel.parent and panels[2].panel.parent.w) or 596;
-  local colW = math.floor((gridW - 8 - 10) / 2);
+  local colW = panelW;
   local duoW = math.floor((colW - 16 - 8) / 2);
   assert(8 + 2 * duoW + 8 + 8 <= colW, "duo pair fits panel");
   assert(colW - (8 + 2 * duoW + 8) <= 9, "right inset sane, got " .. tostring(colW - (8 + 2 * duoW + 8)));
-  assert(math.abs(panelW - colW) <= 1, "panel spans column");
   print("setup duo inset OK: duoW " .. tostring(duoW));
 end
 -- logo-gold tint: panels share the badge gold (PAL.gold).
