@@ -1605,7 +1605,11 @@ function M.RenderSetup()
         local okS, sc = pcall(UIParent.GetScale, UIParent)
         if okS and tonumber(sc) and tonumber(sc) > 0 then scale = tonumber(sc) end
       end
-      if left and cx then rel = (cx - left) / scale end
+      -- Units: GetCursorPosition is raw screen px, GetLeft is UI
+      -- units — unscale the cursor FIRST, then subtract. Dividing
+      -- the difference mixes units and drifts with UI scale (at 0.8
+      -- the 30-end read as 10).
+      if left and cx then rel = (cx / scale) - left end
       if rel == nil then rel = frac() * w end
       local f = rel / w
       if f < 0 then f = 0 end

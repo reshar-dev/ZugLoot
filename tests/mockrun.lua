@@ -820,6 +820,13 @@ st4.rollSlider.commitAt(100 - 50);
 assert(Z.DB.rollTime == 1, "click left of track clamps to min");
 st4.rollSlider.commitAt(100 + wrap.w + 500);
 assert(Z.DB.rollTime == 30, "click right of track clamps to max");
+-- scaled client: UI scale 0.8, cursor raw px, frame left UI units.
+-- Clicking the 30-end (raw 0.8*(100+w)) must read 30, not drift.
+if UIParent then UIParent.GetScale = function() return 0.8 end end
+st4.rollSlider.commitAt(0.8 * (100 + wrap.w));
+assert(Z.DB.rollTime == 30, "scaled click at max reads max");
+st4.rollSlider.commitAt(0.8 * 100);
+assert(Z.DB.rollTime == 1, "scaled click at min reads min");
 if UIParent then UIParent.GetScale = ks end
 Z.DB.rollTime = nil;
 print("setup roll timer OK");
