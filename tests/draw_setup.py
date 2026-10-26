@@ -49,9 +49,7 @@ BUTTONS = {
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
              "Corrupted Sand", "Dream shards", "Naxx scraps",
              "Necrotic Runes"]
-LOOTING_INFO = ["Drops logged: 0  (/zl log)",
-                "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl",
-                'simraid <raid>']
+LOOTING_INFO = ["Drops logged: 0  (/zl log)"]
 
 GRID_W = BODY_W - 8
 # Members-tab remainder split + the window-axis chrome shift
@@ -70,7 +68,7 @@ N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
     "Rolling": BH + 8 + 45,  # duo pair + timer cell (readout/track/captions)
-    "Looting": BH + 8 + BH + 8 + 47,
+    "Looting": BH + 8 + BH + 8 + 21,  # drop-count line only
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,
@@ -123,9 +121,7 @@ F_BRAND = font(26, True)
 
 d.rectangle([0, 0, W, 2], fill=G)
 d.text((16, 14), "ZUGLOOT", font=F_BRAND, fill=G)
-d.text((16, 48), "Import & options", font=font(18, True), fill=INK)
-d.text((16, 72), "Role: Master Looter -- only the master looter may broadcast sheets.",
-       font=F_SMALL, fill=MUTE)
+# No tab header in-game anymore: the SETUP tab speaks for itself.
 
 tabs = ["SHEET", "RAIDS", "PYSANKA", "MEMBERS", "SETUP"]
 tx = 560

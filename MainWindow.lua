@@ -1441,15 +1441,8 @@ function M.RenderSetup()
   local b = bodies[key]
   local row = CreateFrame("Frame", nil, b.child)
   row:SetWidth(BODY_WIDTH)
-  -- Centered grid (computed below): title/subtitle align to its left
-  -- edge so the whole tab shares one axis. Declared here (Lua locals
-  -- bind at declaration) and filled before the sections place panels.
-  local marginX = 4
-  local t = FS(row, "GameFontNormalLarge", "Import & options")
-  t:SetPoint("TOPLEFT", row, "TOPLEFT", marginX, -6)
-  local sub = FS(row, "GameFontHighlightSmall", "Role: " .. Z.SRSecurity.RoleLabel() .. " — only the master looter may broadcast sheets.")
-  sub:SetPoint("TOPLEFT", row, "TOPLEFT", marginX, -28)
-  sub:SetWidth(BODY_WIDTH - 16) sub:SetJustifyH("LEFT")
+  -- No header: the SETUP tab speaks for itself. The grid starts at
+  -- the top.
   -- Buttons are built into per-section content frames, then each
   -- section is wrapped in a rounded gold panel. Absolute Y inside a
   -- section counts down from the heading; the panel is sized from the
@@ -1459,7 +1452,7 @@ function M.RenderSetup()
   local GAP = 10 -- vertical gap between panels
   local PAD_TOP, PAD_BOTTOM, PAD_SIDE = 24, 8, 8 -- heading + margins
   -- (No single button width anymore: duoW/fullButton derive from colW.)
-  local y = -52 -- top of the two-column area (below the subtitle)
+  local y = -4 -- top of the two-column area (no header above it)
   local panels = {} -- debug hook: { title, panel, top } per section
   -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
   -- Automation. One invisible wrapper (gridF) holds both columns so
@@ -1484,7 +1477,7 @@ function M.RenderSetup()
   if half < 0 then half = 0 end
   local colW = math.floor((half * 2 - GAP) / 2)
   local pairW = colW * 2 + GAP
-  marginX = math.floor(axis - pairW / 2)
+  local marginX = math.floor(axis - pairW / 2)
   local leftX, rightX = marginX, marginX + colW + GAP
   local ly, ry = 0, 0 -- running cursors inside gridF (Members style)
   -- Two-across buttons inside every panel (Automation proved the
@@ -1751,11 +1744,9 @@ function M.RenderSetup()
   -- Left column, top. Two-across pairs: takeover | ML-on-boss /
   -- back-to-group | threshold, then the info block underneath.
   do
-    -- pair row (24) + 8 + pair row (24) + 8 + the info block (3
-    -- wrapped lines at ~13px + 8 gap = 47: the simulate line wraps,
-    -- and the block must clear the bottom border instead of sitting
-    -- on it). The roll timer lives in the Rolling panel now.
-    local contentH = BH + 8 + BH + 8 + 47
+    -- pair row (24) + 8 + pair row (24) + 8 + the drop count line
+    -- (~13px + 8 gap = 21), clearing the bottom border.
+    local contentH = BH + 8 + BH + 8 + 21
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
@@ -1824,8 +1815,7 @@ function M.RenderSetup()
     Tip(b10, "Boss threshold", "Loot threshold applied when auto-switching to master loot on a boss.",
       "Previous threshold is remembered and restored on switch-back.")
     local info = FS(panel, "GameFontHighlightSmall",
-      "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)\n" ..
-      "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl simraid <raid>")
+      "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)")
     info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8)
     info:SetWidth(colW - PAD_SIDE * 2) info:SetJustifyH("LEFT")
     M.setupBtns = M.setupBtns or {}
