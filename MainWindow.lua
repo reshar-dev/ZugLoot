@@ -1616,12 +1616,18 @@ function M.RenderSetup()
       if f > 1 then f = 1 end
       return lo + math.floor(f * (hi - lo) + 0.5)
     end
+    -- onChange hook (wired by the caller): repaint hooks live here
+    -- so EVERY commit path (click, drag, programmatic) repaints —
+    -- not just the outer wrapper, which drags bypass.
+    local onChange = nil
     local function commitAt(cx)
       local v = xToVal(cx)
       if set then set(v) end
       paint()
+      if onChange then onChange(v) end
     end
     slider.commitAt = commitAt
+    slider.setOnChange = function(fn) onChange = fn end
     if thumb and thumb.SetScript then
       thumb:SetScript("OnMouseDown", function() dragging = true end)
       thumb:SetScript("OnMouseUp", function() dragging = false end)
@@ -1654,10 +1660,10 @@ function M.RenderSetup()
   -- Section 1: Rolling — auto-roll + the raider roll-window policy +
   -- the roll timer (slider 1..30s with an editable seconds box).
   -- Right column, top. Two-across: auto-roll | roll window, then the
-  -- timer cell underneath (custom slider + compact box stacked in
-  -- ONE duo cell: readout, track, captions, box = 66px tall).
+  -- timer cell underneath (custom slider in ONE duo cell: readout,
+  -- track, captions = 45px tall).
   do
-    local contentH = BH + 8 + 66
+    local contentH = BH + 8 + 45
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
     local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
@@ -1704,7 +1710,7 @@ function M.RenderSetup()
     local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
     local timerCell = CreateFrame("Frame", nil, panel)
     if timerCell then
-      timerCell:SetWidth(duoW) timerCell:SetHeight(66)
+      timerCell:SetWidth(duoW) timerCell:SetHeight(45)
       timerCell:SetPoint("TOPLEFT", panel, "TOPLEFT",
         PAD_SIDE, -PAD_TOP - BH - 8)
     end
@@ -1722,48 +1728,22 @@ function M.RenderSetup()
       { "Roll timer", "Seconds rollers get before the roll resolves.",
         "1..30s, default 10s. Applies to the next roll." },
       12 + 6 + 1 + 10)
-    -- Compact value box (~1/3 cell) under the slider stack: cell
-    -- layout is readout 10 + wrap 29 (track 6 + captions 10) + 2 +
-    -- box 20 = 61 of 66. Box width 64 keeps the grid rhythm.
-    local box = PYEdit(tParent, 64, 20,
-      function() return tostring(curTimeout()) end,
-      function(v)
-        if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
-      end, "roll timeout")
-    if box and box.SetPoint then
-      box:SetPoint("TOPRIGHT", tParent, "TOPRIGHT", 0, sliderTop - 10 - 29 - 2)
-      if box.SetJustifyH then box:SetJustifyH("CENTER") end
-    end
-    -- Two-way mirror: slider commits repaint the readout + box, box
-    -- commits repaint the slider + readout. Both read back the
-    -- clamped store.
+    -- Slider commits repaint the readout (via onChange INSIDE the
+    -- slider, so drags repaint too — the old outer wrapper only
+    -- covered clicks). Both read back the clamped store.
     local function syncTimeoutControls()
       local v = curTimeout()
       if sl and sl.refresh then sl:refresh() end
       if valFS and valFS.SetText then valFS:SetText(tostring(v) .. "s") end
-      if box and box.zlRefresh then box:zlRefresh()
-      elseif box and box.SetText then box:SetText(tostring(v)) end
     end
-    -- Hook the writes: gridSlider commits through `set`, the box
-    -- through zlSet — wrap both with the repaint.
-    if sl and sl.commitAt then
-      local rawCommit = sl.commitAt
-      sl.commitAt = function(cx)
-        rawCommit(cx)
-        syncTimeoutControls()
-      end
-    end
-    local boxSet = box and box.zlSet or nil
-    if box and boxSet then
-      box.zlSet = function(v)
-        boxSet(v)
-        syncTimeoutControls()
-      end
-    end
+    -- Dot-call: setOnChange is a plain closure field, not a frame
+    -- method (colon would pass sl as the callback — same bug class
+    -- as the GetLeft dot-call). Headless guards stay.
+    if sl and sl.setOnChange then sl.setOnChange(function() syncTimeoutControls() end) end
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.raiderFrame = b11
     M.setupBtns.rollSlider = sl
-    M.setupBtns.rollBox = box
+    M.setupBtns.rollReadout = valFS
     table.insert(panels, { title = "Rolling", panel = panel, top = ry })
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
@@ -2212,15 +2192,15 @@ end
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the raider-frame
 -- policy button + the auto-need category buttons + the sub-threshold
--- auto-loot button + the roll-timer slider/box. Returns { mlOnBoss,
+-- auto-loot button + the roll-timer slider/readout. Returns { mlOnBoss,
 -- backToGroup, bossThreshold, raiderFrame, autoNeed, autoLootBelow,
--- rollSlider, rollBox } (nil before first Setup render).
+-- rollSlider, rollReadout } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
     autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow,
-    rollSlider = sb.rollSlider, rollBox = sb.rollBox }
+    rollSlider = sb.rollSlider, rollReadout = sb.rollReadout }
 end
 
 function M.Build()

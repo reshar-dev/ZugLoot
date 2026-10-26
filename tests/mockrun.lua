@@ -767,33 +767,19 @@ assert(string.find(st3.raiderFrame.label or "", "ALL", 1, true) ~= nil, "roll-wi
 st3.raiderFrame:GetScript("OnClick")();
 assert(Z.DB.raiderFrame == "ml", "roll-window toggle flips back to ML");
 Z.DB.raiderFrame = nil;
--- roll timer: slider 1..30 + editable seconds box, two-way mirror.
+-- roll timer: custom slider + readout, no text box (readout shows it).
 Z.DB.rollTime = nil;
 Z.MainWindow.SelectTab("setup");
 local st4 = Z.MainWindow.DebugSetupToggles();
 assert(st4.rollSlider ~= nil, "roll slider built");
-assert(st4.rollBox ~= nil, "roll seconds box built");
+assert(st4.rollReadout ~= nil, "roll readout built");
 assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider spans 1..30");
 assert(ZugLoot.MasterLootUI.RollTimeout() == 10, "default 10s");
--- box commit clamps + repaints the slider (thumb fraction follows).
-st4.rollBox.zlSet("99");
-assert(Z.DB.rollTime == 30, "box clamps to max");
-local frMax = nil;
-if st4.rollSlider.paint then
-  -- paint returns the thumb fraction: full range => 1.
-  frMax = st4.rollSlider.paint();
-end
-assert(frMax == nil or frMax == 1, "slider follows box");
-st4.rollBox.zlSet("0");
-assert(Z.DB.rollTime == 1, "box clamps to min");
-st4.rollBox.zlSet("17");
-assert(Z.DB.rollTime == 17, "box stores seconds");
-assert(ZugLoot.MasterLootUI.RollTimeout() == 17, "timeout reads the store");
--- slider commit rewrites the box. commitAt takes a cursor x like
--- the client drag path; the mock frame has no screen rect, so pin
--- the geometry first (GetLeft/GetScale), then commit mid-track.
-st4.rollBox.zlSet("10");
-assert(Z.DB.rollTime == 10, "box reset");
+assert(st4.rollReadout.txt == "10s", "readout shows default");
+-- slider commit stores + repaints the readout through onChange
+-- (the old bug: drags bypassed the outer wrapper, readout froze).
+-- commitAt takes a cursor x like the client drag path; the mock
+-- frame has no screen rect, so pin the geometry first.
 local wrap = st4.rollSlider.wrap;
 assert(wrap ~= nil, "slider wrap built");
 wrap.GetLeft = function() return 100 end;
@@ -802,11 +788,7 @@ if UIParent then UIParent.GetScale = function() return 1 end end
 st4.rollSlider.commitAt(100 + math.floor(wrap.w * (25 - 1) / (30 - 1)));
 if UIParent then UIParent.GetScale = _keepScale end
 assert(Z.DB.rollTime == 25, "slider drag stores");
-assert(st4.rollBox.zlGet() == "25", "box mirrors the drag");
--- non-numeric box input refuses (store untouched).
-Z.DB.rollTime = 25;
-st4.rollBox.zlSet("abc");
-assert(Z.DB.rollTime == 25, "garbage input keeps the store");
+assert(st4.rollReadout.txt == "25s", "readout follows the drag");
 -- custom slider internals: range kept, fraction tracks the value
 -- (25s => 24/29), commit clamps out-of-range cursor positions.
 assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider range kept");
@@ -818,6 +800,7 @@ local ks = UIParent and UIParent.GetScale;
 if UIParent then UIParent.GetScale = function() return 1 end end
 st4.rollSlider.commitAt(100 - 50);
 assert(Z.DB.rollTime == 1, "click left of track clamps to min");
+assert(st4.rollReadout.txt == "1s", "readout follows clamp");
 st4.rollSlider.commitAt(100 + wrap.w + 500);
 assert(Z.DB.rollTime == 30, "click right of track clamps to max");
 -- scaled client: UI scale 0.8, cursor raw px, frame left UI units.
