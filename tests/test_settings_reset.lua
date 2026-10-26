@@ -147,4 +147,25 @@ eq(Z.LootWindow.silentLootArms, nil, "silent arms dropped")
 eq(Z.DB.sheet, nil, "sheet still cleared")
 ok(string.find(printed[#printed], "reset to defaults"), "still reports")
 
+-- 5. Roll-timeout policy: single source of truth, 1..30 clamp,
+-- 10s default. Every clock reads RollTimeout; SetRollTimeout is
+-- the only writer (slider + box + /zl time all funnel through it).
+local ML = Z.MasterLootUI
+eq(Z.Limits.ROLL_TIMEOUT_DEFAULT, 10, "default is 10s")
+eq(Z.Limits.ROLL_TIMEOUT_MIN, 1, "min is 1s")
+eq(Z.Limits.ROLL_TIMEOUT_MAX, 30, "max is 30s")
+Z.DB.rollTime = nil
+eq(ML.RollTimeout(), 10, "missing store reads default")
+Z.DB.rollTime = 99
+eq(ML.RollTimeout(), 30, "stale 99 clamps to max on read")
+Z.DB.rollTime = 0
+eq(ML.RollTimeout(), 1, "stale 0 clamps to min on read")
+eq(ML.SetRollTimeout(17), 17, "stores seconds")
+eq(Z.DB.rollTime, 17, "writer is the store")
+eq(ML.SetRollTimeout(99), 30, "clamps high")
+eq(ML.SetRollTimeout(-5), 1, "clamps low")
+eq(ML.SetRollTimeout("abc"), nil, "garbage refused")
+eq(Z.DB.rollTime, 1, "refused write keeps the store")
+eq(ML.RollDuration(), 1, "clock reads the clamped store")
+
 return T

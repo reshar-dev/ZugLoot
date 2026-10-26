@@ -672,14 +672,10 @@ end
 assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
 assert(panels[3].top < panels[1].top, "Automation under Rolling");
 assert(panels[4].top < panels[2].top, "Danger zone under Looting");
--- balance: two-across everywhere shrank both columns — left
--- (Looting 156 + Danger 56 + gap = 222) vs right (Rolling 56 +
--- Automation 128 + gap = 194). 28px apart stays calm.
--- Looting content is 2 pair rows + the 60px info block; Automation
--- content is 3 auto-need rows + the auto-loot row.
-local leftH = (24 + (24 + 8 + 24 + 8 + 60) + 8) + 10 + (24 + 24 + 8);
-local rightH = (24 + 24 + 8) + 10 + (24 + (3 * 20 + 2 * 4 + 8 + 20) + 8);
-assert(math.abs(leftH - rightH) <= 32, "columns balanced, got " .. tostring(leftH) .. " vs " .. tostring(rightH));
+-- ordering: each column stacks downward without overlap; the row
+-- height fits the deeper column. (Absolute heights vary by width —
+-- the auto-need grid goes two-across wider up and the timer row adds
+-- a row to Rolling — so pin the order, not hard numbers.)
 for i = 1, 4 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
@@ -771,6 +767,33 @@ assert(string.find(st3.raiderFrame.label or "", "ALL", 1, true) ~= nil, "roll-wi
 st3.raiderFrame:GetScript("OnClick")();
 assert(Z.DB.raiderFrame == "ml", "roll-window toggle flips back to ML");
 Z.DB.raiderFrame = nil;
+-- roll timer: slider 1..30 + editable seconds box, two-way mirror.
+Z.DB.rollTime = nil;
+Z.MainWindow.SelectTab("setup");
+local st4 = Z.MainWindow.DebugSetupToggles();
+assert(st4.rollSlider ~= nil, "roll slider built");
+assert(st4.rollBox ~= nil, "roll seconds box built");
+assert(st4.rollSlider.mn == 1 and st4.rollSlider.mx == 30, "slider spans 1..30");
+assert(ZugLoot.MasterLootUI.RollTimeout() == 10, "default 10s");
+-- box commit clamps + repositions the slider.
+st4.rollBox.zlSet("99");
+assert(Z.DB.rollTime == 30, "box clamps to max");
+assert(st4.rollSlider.val == 30, "slider follows box");
+st4.rollBox.zlSet("0");
+assert(Z.DB.rollTime == 1, "box clamps to min");
+st4.rollBox.zlSet("17");
+assert(Z.DB.rollTime == 17, "box stores seconds");
+assert(ZugLoot.MasterLootUI.RollTimeout() == 17, "timeout reads the store");
+-- slider drag rewrites the box.
+st4.rollSlider.val = 25;
+st4.rollSlider:GetScript("OnValueChanged")();
+assert(Z.DB.rollTime == 25, "slider drag stores");
+-- non-numeric box input refuses (store untouched).
+Z.DB.rollTime = 25;
+st4.rollBox.zlSet("abc");
+assert(Z.DB.rollTime == 25, "garbage input keeps the store");
+Z.DB.rollTime = nil;
+print("setup roll timer OK");
 print("setup loot toggles OK");
 -- scrollbar invariant, checked on every tab: a visible slider may only belong
 -- to the active tab. Hidden tabs must never paint a thumb (the old bug left

@@ -526,8 +526,33 @@ end
 -- Cancel/Award/End disarm. Guard: only the CURRENT open roll for THIS
 -- item may fire -- anything else is a dead handle from a closed window.
 -- Headless-safe: without the Timer module there is no auto-finish.
+-- Roll timeout (seconds): single source of truth for every roll
+-- clock (BeginRollTimer) and countdown display. Clamped to
+-- [ROLL_TIMEOUT_MIN, ROLL_TIMEOUT_MAX] (1..30); default 10.
+-- SetRollTimeout returns the stored value (clamped) or nil when
+-- refused. Headless-testable, no client calls.
+function M.RollTimeout()
+  local dflt = (Z.Limits and Z.Limits.ROLL_TIMEOUT_DEFAULT) or 10
+  local n = Z.DB and tonumber(Z.DB.rollTime) or dflt
+  return M.ClampRollTimeout(n)
+end
+function M.ClampRollTimeout(n)
+  local lo = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
+  local hi = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
+  n = math.floor(tonumber(n) or 0)
+  if n < lo then n = lo end
+  if n > hi then n = hi end
+  return n
+end
+function M.SetRollTimeout(n)
+  n = tonumber(n)
+  if not n then return nil end
+  n = M.ClampRollTimeout(n)
+  if Z.DB then Z.DB.rollTime = n end
+  return n
+end
 function M.RollDuration()
-  return (Z.DB and tonumber(Z.DB.rollTime)) or 15
+  return M.RollTimeout()
 end
 function M.BeginRollTimer(roll)
   if not roll then return end

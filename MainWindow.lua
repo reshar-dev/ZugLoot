@@ -1508,10 +1508,13 @@ function M.RenderSetup()
     btn:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD_SIDE, rowY)
     return btn
   end
-  -- Section 1: Rolling — auto-roll + the raider roll-window policy.
-  -- Right column, top. Two-across: auto-roll | roll window.
+  -- Section 1: Rolling — auto-roll + the raider roll-window policy +
+  -- the roll timer (slider 1..30s with an editable seconds box).
+  -- Right column, top. Two-across: auto-roll | roll window, then the
+  -- timer row (slider left, value box right) underneath. +6 air for
+  -- the 1s/30s captions hanging below the slider.
   do
-    local contentH = BH
+    local contentH = BH + 8 + BH + 6
     local panelH = PAD_TOP + contentH + PAD_BOTTOM
     local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
@@ -1544,8 +1547,78 @@ function M.RenderSetup()
     end)
     Tip(b11, "Roll window", "When the raider roll window pops: master-loot rolls only (ML), or every roll (ALL).",
       "Default ML: group loot stays in Blizzard's Need/Greed frames, solo stays shut.")
+    -- Roll timer: slider (1..30s) + editable seconds box. Both write
+    -- the same value via MasterLootUI.SetRollTimeout and mirror each
+    -- other; the box clamps on Enter, the slider on drag.
+    local MLUI = Z.MasterLootUI
+    local function curTimeout()
+      if MLUI and MLUI.RollTimeout then return MLUI.RollTimeout() end
+      return (Z.Limits and Z.Limits.ROLL_TIMEOUT_DEFAULT) or 10
+    end
+    local loT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MIN) or 1
+    local hiT = (Z.Limits and Z.Limits.ROLL_TIMEOUT_MAX) or 30
+    local sliderW = duoW
+    local boxW = duoW
+    local sl = CreateFrame("Slider", nil, panel, "OptionsSliderTemplate")
+    if sl then
+      sl:SetWidth(sliderW) sl:SetHeight(16)
+      sl:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8)
+      if sl.SetMinMaxValues then sl:SetMinMaxValues(loT, hiT) end
+      if sl.SetValueStep then sl:SetValueStep(1) end
+      if sl.SetValue then sl:SetValue(curTimeout()) end
+    end
+    local box = PYEdit(panel, boxW, BH,
+      function() return tostring(curTimeout()) end,
+      function(v)
+        if MLUI and MLUI.SetRollTimeout then return MLUI.SetRollTimeout(v) end
+      end, "roll timeout")
+    if box and box.SetPoint then
+      box:SetPoint("TOPLEFT", panel, "TOPLEFT",
+        PAD_SIDE + duoW + 8, -PAD_TOP - BH - 8)
+    end
+    -- Two-way mirror: slider drag rewrites the box, box commit
+    -- repositions the slider. Both read back the clamped store.
+    local function syncTimeoutControls()
+      local v = curTimeout()
+      if sl and sl.SetValue then sl:SetValue(v) end
+      if box and box.zlRefresh then box:zlRefresh()
+      elseif box and box.SetText then box:SetText(tostring(v)) end
+    end
+    if sl and sl.SetScript then
+      sl:SetScript("OnValueChanged", function()
+        local v = nil
+        if sl.GetValue then
+          local ok, gv = pcall(sl.GetValue, sl)
+          if ok then v = gv end
+        end
+        if v == nil then return end
+        if MLUI and MLUI.SetRollTimeout then MLUI.SetRollTimeout(v) end
+        if box and box.zlRefresh then box:zlRefresh()
+        elseif box and box.SetText then box:SetText(tostring(curTimeout())) end
+      end)
+    end
+    -- Box commits through zlSet (PYEdit); re-anchor the slider after.
+    local boxSet = box and box.zlSet or nil
+    if box and boxSet then
+      box.zlSet = function(v)
+        boxSet(v)
+        syncTimeoutControls()
+      end
+    end
+    if sl then
+      -- Low/high captions under the slider ends (1s / 30s), tucked
+    -- inside the slider width so they never touch the gold edge.
+      local loFS = FS(sl, "GameFontHighlightSmall", tostring(loT) .. "s")
+      if loFS.SetPoint then loFS:SetPoint("TOPLEFT", sl, "BOTTOMLEFT", 2, -2) end
+      local hiFS = FS(sl, "GameFontHighlightSmall", tostring(hiT) .. "s")
+      if hiFS.SetPoint then hiFS:SetPoint("TOPRIGHT", sl, "BOTTOMRIGHT", -2, -2) end
+      Tip(sl, "Roll timer", "Seconds rollers get before the roll resolves.",
+        "1..30s, default 10s. Applies to the next roll.")
+    end
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.raiderFrame = b11
+    M.setupBtns.rollSlider = sl
+    M.setupBtns.rollBox = box
     table.insert(panels, { title = "Rolling", panel = panel, top = ry })
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
@@ -1553,8 +1626,11 @@ function M.RenderSetup()
   -- Left column, top. Two-across pairs: takeover | ML-on-boss /
   -- back-to-group | threshold, then the info block underneath.
   do
-    -- pair row (24) + 8 + pair row (24) + 8 + the info block (60).
-    local contentH = BH + 8 + BH + 8 + 60
+    -- pair row (24) + 8 + pair row (24) + 8 + the info block (3
+    -- wrapped lines at ~13px + 8 gap = 47: the simulate line wraps,
+    -- and the block must clear the bottom border instead of sitting
+    -- on it). The roll timer lives in the Rolling panel now.
+    local contentH = BH + 8 + BH + 8 + 47
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
@@ -1623,7 +1699,6 @@ function M.RenderSetup()
     Tip(b10, "Boss threshold", "Loot threshold applied when auto-switching to master loot on a boss.",
       "Previous threshold is remembered and restored on switch-back.")
     local info = FS(panel, "GameFontHighlightSmall",
-      "Roll time: " .. tostring(Z.DB and Z.DB.rollTime or 15) .. "s  (/zl time N)\n" ..
       "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)\n" ..
       "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl simraid <raid>")
     info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8)
@@ -1992,13 +2067,15 @@ end
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the raider-frame
 -- policy button + the auto-need category buttons + the sub-threshold
--- auto-loot button. Returns { mlOnBoss, backToGroup, bossThreshold,
--- raiderFrame, autoNeed, autoLootBelow } (nil before first Setup render).
+-- auto-loot button + the roll-timer slider/box. Returns { mlOnBoss,
+-- backToGroup, bossThreshold, raiderFrame, autoNeed, autoLootBelow,
+-- rollSlider, rollBox } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
-    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow }
+    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow,
+    rollSlider = sb.rollSlider, rollBox = sb.rollBox }
 end
 
 function M.Build()
