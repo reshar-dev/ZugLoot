@@ -1,10 +1,12 @@
 -- ZugLoot/AutoRoll.lua
--- Per-character auto-roll for SR'd items + LazyPig-style auto-need
--- for group-roll trash (ZG coins/bijous, MC mats, AQ scarabs/idols,
+-- Per-character auto-roll for SR'd items + per-category auto
+-- RAID-ROLL for trash (ZG coins/bijous, MC mats, AQ scarabs/idols,
 -- Corrupted Sand, Dream shards, Naxx scraps, Necrotic Runes) +
--- sub-threshold corpse auto-loot. All off by default except the
--- LazyPig-parity SAND=need default; every category cycles
--- OFF -> NEED -> GREED -> PASS from the Setup tab.
+-- sub-threshold corpse auto-loot. This addon is master-loot only:
+-- there are no group-roll votes here, so each trash category is
+-- either OFF or auto raid-rolled by the ML when the corpse opens.
+-- All off by default; every category toggles OFF <-> RAID-ROLL
+-- from the Setup tab.
 ZugLoot = ZugLoot or {}
 local Z = ZugLoot
 local M = {}
@@ -71,10 +73,9 @@ function M.AllGreenAndAuto()
   return false
 end
 
--- LazyPig auto-need tables (itemID -> true). Ported from LazyPig:
--- ZG coins/bijous, MC mats, AQ scarabs/idols, Corrupted Sand,
--- Dream shards, Naxx scraps. Necrotic Runes are hardcoded NEED
--- (LazyPig parity: no toggle, always need).
+-- Trash item tables (itemID -> true), category membership for auto
+-- raid-roll: ZG coins/bijous, MC mats, AQ scarabs/idols, Corrupted
+-- Sand, Dream shards, Naxx scraps. Necrotic Runes claim RUNE.
 M.NEED_TABLES = {
   ZG = { [19698] = true, [19699] = true, [19700] = true, [19701] = true,
     [19702] = true, [19703] = true, [19704] = true, [19705] = true,
@@ -93,71 +94,59 @@ M.NEED_TABLES = {
   NAXX = { [22373] = true, [22374] = true, [22375] = true, [22376] = true },
 }
 M.NECROTIC_RUNE = 22484
--- Setup cycle order for each category. Stored vote: nil = OFF,
--- 1 = NEED, 2 = GREED, 0 = PASS (RollOnLoot ids, LazyPig parity).
--- (No nil inside the array: ArrayCount stops at the first nil.)
-M.VOTE_ORDER = { 1, 2, 0 }
-M.VOTE_LABEL = { [1] = "NEED", [2] = "GREED", [0] = "PASS" }
-M.CATEGORIES = { "ZG", "MC", "AQ", "SAND", "ES", "NAXX" }
+M.CATEGORIES = { "ZG", "MC", "AQ", "SAND", "ES", "NAXX", "RUNE" }
 M.CATEGORY_LABEL = {
   ZG = "ZG coins/bijous", MC = "MC mats", AQ = "AQ scarabs/idols",
   SAND = "Corrupted Sand", ES = "Dream shards", NAXX = "Naxx scraps",
+  RUNE = "Necrotic Runes",
 }
 
--- Stored config table (Z.DB.autoNeed = { ZG=1, ... }). Nil-safe: the
--- DB may predate the feature (InitDB backfills).
+-- Stored config table (Z.DB.autoRaidRoll = { ZG=true, ... }).
+-- Nil-safe: the DB may predate the feature (InitDB backfills).
+-- Migrates the old NEED-vote table (autoNeed = { ZG=1, ... }): any
+-- nonzero vote becomes raid-roll ON, OFF stays OFF.
 function M.Config()
   if Z.DB then
-    Z.DB.autoNeed = Z.DB.autoNeed or {}
-    return Z.DB.autoNeed
+    if not Z.DB.autoRaidRoll then
+      Z.DB.autoRaidRoll = {}
+      local old = Z.DB.autoNeed
+      if old then
+        for i = 1, Z.Util.ArrayCount(M.CATEGORIES) do
+          local cat = M.CATEGORIES[i]
+          if tonumber(old[cat]) and tonumber(old[cat]) ~= 0 then
+            Z.DB.autoRaidRoll[cat] = true
+          end
+        end
+      end
+    end
+    return Z.DB.autoRaidRoll
   end
   M._fallback = M._fallback or {}
   return M._fallback
 end
--- Vote for a category: nil (off) or 1/2/0. Anything else reads as off.
-function M.VoteFor(cat)
-  local v = tonumber(M.Config()[cat])
-  if v == 1 or v == 2 or v == 0 then return v end
+-- Raid-roll enabled for a category: boolean true = auto raid-roll
+-- on loot. Anything else (nil, false, legacy numbers, junk) reads
+-- as off — the Setup toggle is the only writer, and it stores bools.
+-- Pure state, headless-testable.
+function M.RaidRollFor(cat)
+  if M.Config()[cat] == true then return true end
   return nil
 end
--- Cycle a category OFF -> NEED -> GREED -> PASS -> OFF. Returns the
--- new vote (nil = OFF). Pure state, headless-testable.
+-- Toggle a category OFF <-> RAID-ROLL. Returns the new state
+-- (true = RAID-ROLL, nil = OFF). Pure state, headless-testable.
 function M.Cycle(cat)
   local cfg = M.Config()
-  local cur = M.VoteFor(cat)
-  local next = nil
-  if cur == nil then
-    next = M.VOTE_ORDER[1] -- OFF -> NEED
-  else
-    for i = 1, Z.Util.ArrayCount(M.VOTE_ORDER) do
-      if M.VOTE_ORDER[i] == cur then
-        local n = i + 1
-        if n > Z.Util.ArrayCount(M.VOTE_ORDER) then next = nil -- PASS -> OFF
-        else next = M.VOTE_ORDER[n] end
-        break
-      end
-    end
-    if next == nil and cur ~= nil then
-      -- Unknown stored vote: restart the cycle at NEED. (A known cur
-      -- at the last position also lands here with next == nil, which
-      -- is the intended PASS -> OFF wrap.)
-      local known = false
-      for i = 1, Z.Util.ArrayCount(M.VOTE_ORDER) do
-        if M.VOTE_ORDER[i] == cur then known = true break end
-      end
-      if not known then next = M.VOTE_ORDER[1] end
-    end
-  end
-  cfg[cat] = next
-  return next
+  if cfg[cat] then cfg[cat] = nil else cfg[cat] = true end
+  if cfg[cat] then return true end
+  return nil
 end
-function M.VoteLabel(v)
-  if v == nil then return "OFF" end
-  return M.VOTE_LABEL[v] or "OFF"
+function M.RaidRollLabel(v)
+  if v then return "RAID-ROLL" end
+  return "OFF"
 end
 -- Which category (if any) claims this itemID. Necrotic Runes report
--- as SAND-class hardcoded NEED (handled first in OnGroupRoll).
--- Pure, headless-testable.
+-- as RUNE (their own auto-raid-roll toggle, off by default like
+-- every other category). Pure, headless-testable.
 function M.CategoryFor(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
@@ -168,53 +157,28 @@ function M.CategoryFor(itemID)
   end
   return nil
 end
--- Group-roll auto-vote (START_LOOT_ROLL path): vote the configured
--- action for known trash, silently (no chat — LazyPig parity: chat
--- stays clean, the issue's core ask). Necrotic Runes always NEED.
--- Returns the vote issued (1/2/0) or nil when nothing applied.
--- Headless-safe: without RollOnLoot / roll APIs, resolves the vote
--- without issuing (dry-run returns what WOULD be voted).
-function M.OnGroupRoll(rollID)
-  local id = tonumber(rollID)
-  if not id then return nil end
-  -- Item identity comes from the roll link (GetLootRollItemLink);
-  -- GetLootRollItemInfo carries texture/name/count/quality, no id.
-  local itemID = nil
-  if GetLootRollItemLink then
-    local ok, l = pcall(GetLootRollItemLink, id)
-    if ok and l and Z.Util and Z.Util.ItemID then
-      itemID = Z.Util.ItemID(l)
-    end
-  end
-  itemID = tonumber(itemID)
+-- Auto raid-roll (loot-opened path): when a corpse opens holding a
+-- trash item whose category is enabled, the ML raid-rolls it straight
+-- away — no clicks, no award window (the roll distributes at once).
+-- Guards: ML only, no roll already running, corpse actually open.
+-- Returns true when a roll started, false/nil otherwise.
+-- Headless-safe: without the ML/loot APIs nothing starts.
+function M.MaybeAutoRaidRoll(itemID)
+  itemID = Z.Util and Z.Util.ItemID(itemID) or tonumber(itemID)
   if not itemID then return nil end
-  local vote = nil
-  if itemID == M.NECROTIC_RUNE then
-    vote = 1 -- hardcoded NEED (LazyPig parity)
-  else
-    local cat = M.CategoryFor(itemID)
-    if cat then vote = M.VoteFor(cat) end
+  local cat = M.CategoryFor(itemID)
+  if not cat then return nil end
+  if not M.RaidRollFor(cat) then return nil end
+  local MLUI = Z.MasterLootUI
+  if not (MLUI and MLUI.StartRaidRoll) then return nil end
+  if MLUI.roll then return nil end -- a roll is already running
+  if Z.SRSecurity and Z.SRSecurity.AmML and not Z.SRSecurity.AmML() then
+    return nil
   end
-  if vote == nil then return nil end
-  if RollOnLoot then pcall(RollOnLoot, id, vote) end
-  M.ConfirmBoPPopup(id, vote)
-  return vote
-end
--- BoP group-roll confirm: RollOnLoot raises CONFIRM_LOOT_ROLL;
--- click it (LazyPig parity) so auto-need on BoP trash doesn't stall.
--- Nil-safe: headless (no StaticPopup) is a no-op.
-function M.ConfirmBoPPopup(rollID, vote)
-  if not (StaticPopup and type(StaticPopup) == "table") then return end
-  for i = 1, (STATICPOPUP_NUMDIALOGS or 4) do
-    local frame = _G and _G["StaticPopup" .. i] or nil
-    if frame and frame.IsShown and frame:IsShown()
-        and frame.which == "CONFIRM_LOOT_ROLL"
-        and frame.data == rollID and frame.data2 == vote then
-      local btn = _G["StaticPopup" .. i .. "Button1"]
-      if btn and btn.Click then pcall(btn.Click, btn) end
-      return
-    end
-  end
+  if MLUI.lootOpen == false then return nil end
+  local roll = MLUI.StartRaidRoll(itemID)
+  if roll then return true end
+  return nil
 end
 -- Sub-threshold auto-loot master switch (Setup tab). Default OFF.
 function M.AutoLootBelow()

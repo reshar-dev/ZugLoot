@@ -92,11 +92,11 @@ function Z.InitDB()
   -- 4 epic). Default uncommon: green+ rolls, grey does not.
   -- Absent = default.
   if ZugLootDB.bossThreshold == nil then ZugLootDB.bossThreshold = 2 end
-  -- LazyPig-style auto-need per trash category (Setup tab): nil = OFF,
-  -- 1 = NEED, 2 = GREED, 0 = PASS. LazyPig-parity default: SAND needs
-  -- (Corrupted Sand auto-roll); everything else off. Absent = off.
-  ZugLootDB.autoNeed = ZugLootDB.autoNeed or {}
-  if ZugLootDB.autoNeed.SAND == nil then ZugLootDB.autoNeed.SAND = 1 end
+  -- Per-category auto raid-roll (Setup Automation tab): true =
+  -- raid-roll when the corpse opens, absent = OFF. Migrates the old
+  -- NEED-vote table (autoNeed = { ZG=1, ... }) on first read in
+  -- AutoRoll.Config; the legacy key is left for the migration.
+  ZugLootDB.autoRaidRoll = ZugLootDB.autoRaidRoll or {}
   -- Sub-threshold corpse auto-loot (Setup tab): take free rows + coin
   -- straight off the corpse, no clicks. Absent = off.
   if ZugLootDB.autoLootBelow == nil then ZugLootDB.autoLootBelow = false end

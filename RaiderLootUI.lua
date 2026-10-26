@@ -494,16 +494,11 @@ function M.OnEvent(event, a1, a2)
       M.ShowItem(item, (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15)
     end
   elseif event == "START_LOOT_ROLL" then
-    -- a1 = rollID (1.12 passes the roll id as first arg). LazyPig-style
-    -- auto-need runs BEFORE the mode gate: it is a background vote
-    -- (silent, no chat, no window), not a frame mirror. Then the
-    -- default ("ml"): group-loot mirror stays SHUT — Blizzard's own
-    -- Need/Greed frames own the vote. Only "all" mode mirrors the
-    -- roll into our dice frame (dice vote via RollOnLoot).
-    if Z.AutoRoll and Z.AutoRoll.OnGroupRoll then
-      pcall(Z.AutoRoll.OnGroupRoll, tonumber(a1))
-    end
-    if M.FrameMode() ~= "all" then return end
+    -- a1 = rollID (1.12 passes the roll id as first arg). Master-loot
+    -- only: group rolls are never auto-voted here. Default ("ml"):
+    -- the group-loot mirror stays SHUT — Blizzard's own Need/Greed
+    -- frames own the vote. Only "all" mode mirrors the roll into
+    -- our dice frame (dice vote via RollOnLoot).
     if M.FrameMode() ~= "all" then return end
     local rollID = tonumber(a1)
     M.groupRollID = rollID

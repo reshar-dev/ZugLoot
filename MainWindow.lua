@@ -1835,9 +1835,10 @@ function M.RenderSetup()
     table.insert(panels, { title = "Looting", panel = panel, top = ly })
     ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
-  -- Section 3: Automation — LazyPig-style auto-need votes for raid
-  -- trash (per-category OFF -> NEED -> GREED -> PASS; silent
-  -- background votes) + sub-threshold corpse auto-loot.
+  -- Section 3: Automation — per-category auto RAID-ROLL for trash
+  -- (this addon is master-loot only: no group-roll votes exist, so
+  -- each trash category is OFF or auto raid-rolled by the ML when
+  -- the corpse opens) + sub-threshold corpse auto-loot.
   -- Right column, under Rolling. Always two-across like every other
   -- panel now (duoW matches the shared builder); narrow windows let
   -- the pair shrink instead of clipping (floored, 1px hides right).
@@ -1860,8 +1861,8 @@ function M.RenderSetup()
       local nb = duoButton(panel, math.mod(i - 1, perRow),
         -PAD_TOP - math.floor((i - 1) / perRow) * (SMALL_H + 4), SMALL_H)
       local function nzLabel()
-        local v = Z.AutoRoll and Z.AutoRoll.VoteFor and Z.AutoRoll.VoteFor(cat) or nil
-        local lab = Z.AutoRoll and Z.AutoRoll.VoteLabel and Z.AutoRoll.VoteLabel(v) or "OFF"
+        local on = Z.AutoRoll and Z.AutoRoll.RaidRollFor and Z.AutoRoll.RaidRollFor(cat) or nil
+        local lab = Z.AutoRoll and Z.AutoRoll.RaidRollLabel and Z.AutoRoll.RaidRollLabel(on) or "OFF"
         local short = Z.AutoRoll and Z.AutoRoll.CATEGORY_LABEL and Z.AutoRoll.CATEGORY_LABEL[cat] or cat
         return tostring(short) .. ": " .. tostring(lab)
       end
@@ -1871,8 +1872,8 @@ function M.RenderSetup()
         nb:SetText(nzLabel())
       end)
       local catTip = (Z.AutoRoll and Z.AutoRoll.CATEGORY_LABEL and Z.AutoRoll.CATEGORY_LABEL[cat]) or cat
-      Tip(nb, "Auto " .. catTip, "Group-roll vote for " .. catTip .. ".",
-        "OFF: no vote. NEED/GREED/PASS: silent background vote, no chat spam.")
+      Tip(nb, "Auto raid-roll " .. catTip, "Raid-roll " .. catTip .. " when the corpse opens.",
+        "OFF: listed for manual rolling. RAID-ROLL: the ML raid-rolls it straight away.")
       nzBtns[cat] = nb
     end
     local b12 = gridSingle(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
@@ -1893,7 +1894,7 @@ function M.RenderSetup()
     Tip(b12, "Auto-loot below threshold", "Take below-threshold corpse loot (free rows + coin) automatically, no clicks.",
       "Group-roll items are never touched — Blizzard's Need/Greed owns those.")
     M.setupBtns = M.setupBtns or {}
-    M.setupBtns.autoNeed = nzBtns
+    M.setupBtns.autoRaidRoll = nzBtns
     M.setupBtns.autoLootBelow = b12
     table.insert(panels, { title = "Automation", panel = panel, top = ry })
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
@@ -2093,14 +2094,14 @@ end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the raider-frame
--- policy button + the auto-need category buttons + the sub-threshold
+-- policy button + the auto-raid-roll category buttons + the sub-threshold
 -- auto-loot button. Returns { mlOnBoss, backToGroup, bossThreshold,
--- raiderFrame, autoNeed, autoLootBelow } (nil before first Setup render).
+-- raiderFrame, autoRaidRoll, autoLootBelow } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
-    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow }
+    autoRaidRoll = sb.autoRaidRoll, autoLootBelow = sb.autoLootBelow }
 end
 
 -- Test hook: the setup-tab panels in display order
@@ -2191,15 +2192,15 @@ end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the raider-frame
--- policy button + the auto-need category buttons + the sub-threshold
+-- policy button + the auto-raid-roll category buttons + the sub-threshold
 -- auto-loot button + the roll-timer slider/readout. Returns { mlOnBoss,
--- backToGroup, bossThreshold, raiderFrame, autoNeed, autoLootBelow,
+-- backToGroup, bossThreshold, raiderFrame, autoRaidRoll, autoLootBelow,
 -- rollSlider, rollReadout } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
-    autoNeed = sb.autoNeed, autoLootBelow = sb.autoLootBelow,
+    autoRaidRoll = sb.autoRaidRoll, autoLootBelow = sb.autoLootBelow,
     rollSlider = sb.rollSlider, rollReadout = sb.rollReadout }
 end
 

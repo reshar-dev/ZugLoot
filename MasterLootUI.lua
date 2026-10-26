@@ -2537,6 +2537,17 @@ function M.OnLootOpened()
     for i = 1, Z.Util.ArrayCount(free) do push(free[i]) end
     Z.LootWindow.SetItems(rows, "loot")
     Z.LootWindow.Show("Boss loot")
+    -- Auto raid-roll (Setup Automation options, default OFF): trash
+    -- whose category is enabled raid-rolls straight away, first match
+    -- wins (one roll at a time — the roll itself blocks the rest).
+    if Z.AutoRoll and Z.AutoRoll.MaybeAutoRaidRoll then
+      for i = 1, Z.Util.ArrayCount(Z.LootWindow.items) do
+        local it = Z.LootWindow.items[i]
+        if it and not it.coin and not it.ignored then
+          if Z.AutoRoll.MaybeAutoRaidRoll(it.itemID) then break end
+        end
+      end
+    end
     -- Sub-threshold auto-loot (issue #17, Setup option, default OFF):
     -- take free rows + coin straight off the corpse, no clicks needed.
     -- Group-roll rows are NEVER touched (Blizzard's Need/Greed owns

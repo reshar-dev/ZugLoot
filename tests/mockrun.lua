@@ -99,7 +99,7 @@ dofile("RollList.lua")
 dofile("Comm.lua");
 dofile("Pysanka.lua");
 dofile("SRImport.lua");
-ZugLoot.AutoRoll = { Set=function() end };
+dofile("AutoRoll.lua");
 ZugLoot.VersionGrid = { seen={}, RosterNames=function() return {"A","B"} end, GridNames=function() return {{name="A",inGroup=true},{name="B",inGroup=true}} end, StatusFor=function() return "GREEN" end, ColorFor=function() return "GREEN" end, Request=function() end };
 dofile("MainWindow.lua");
 dofile("LootWindow.lua");
@@ -814,6 +814,19 @@ assert(Z.DB.rollTime == 1, "scaled click at min reads min");
 if UIParent then UIParent.GetScale = ks end
 Z.DB.rollTime = nil;
 print("setup roll timer OK");
+-- automation toggles: OFF <-> RAID-ROLL per trash category.
+Z.DB.autoRaidRoll = {};
+Z.MainWindow.SelectTab("setup");
+local st5 = Z.MainWindow.DebugSetupToggles();
+assert(st5.autoRaidRoll ~= nil and st5.autoRaidRoll.ZG ~= nil, "auto raid-roll buttons built");
+assert(string.find(st5.autoRaidRoll.ZG.label or "", "OFF", 1, true) ~= nil, "ZG starts OFF");
+st5.autoRaidRoll.ZG:GetScript("OnClick")();
+assert(Z.DB.autoRaidRoll.ZG == true, "click enables raid-roll");
+assert(string.find(st5.autoRaidRoll.ZG.label or "", "RAID-ROLL", 1, true) ~= nil, "label follows");
+st5.autoRaidRoll.ZG:GetScript("OnClick")();
+assert(Z.DB.autoRaidRoll.ZG == nil, "click again disables");
+Z.DB.autoRaidRoll = {};
+print("setup automation OK");
 print("setup loot toggles OK");
 -- scrollbar invariant, checked on every tab: a visible slider may only belong
 -- to the active tab. Hidden tabs must never paint a thumb (the old bug left

@@ -47,7 +47,8 @@ BUTTONS = {
     "Danger zone": ["Reset all settings"],
 }
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
-             "Corrupted Sand", "Dream shards", "Naxx scraps"]
+             "Corrupted Sand", "Dream shards", "Naxx scraps",
+             "Necrotic Runes"]
 LOOTING_INFO = ["Drops logged: 0  (/zl log)",
                 "Simulate (needs sheet, writes back): /zl sim <link> — /zl simboss <boss> — /zl",
                 'simraid <raid>']
