@@ -417,7 +417,7 @@ function M.AddRoll(player, rv, minR, maxR, opts)
   end
   local bonus = M.SRBonus(roll.itemID, player, rtype)
   local landed = { name = player, roll = rv, type = rtype,
-    min = minR, max = maxR, effective = rv + bonus }
+    min = minR, max = maxR, effective = rv + bonus, sr_plus = bonus }
   table.insert(roll.rolls, landed)
   if opts and opts.announce then
     M.AnnounceRoll(landed)
@@ -425,7 +425,7 @@ function M.AddRoll(player, rv, minR, maxR, opts)
   if Z.RaiderLootUI then
     local excluded = rtype == "SR" and Z.DB.sheet and Z.SRData.HasWon
       and Z.SRData.HasWon(Z.DB.sheet, roll.itemID, player) or false
-    Z.RaiderLootUI.OnRoll(player, rv, rtype, excluded)
+    Z.RaiderLootUI.OnRoll(player, rv, rtype, excluded, bonus)
   end
   -- The ML window mirrors the same roll (missed updates resync it whole).
   if Z.LootWindow and Z.LootWindow.SyncRoll then
@@ -2454,7 +2454,6 @@ function M.OnLootOpened()
         Z.LootWindow.Hide()
       else
         Z.LootWindow.Show()
-        Z.Print("Loot window resumed.")
       end
     end
     return
@@ -2584,7 +2583,6 @@ function M.OnLootOpened()
     -- OFF means hands off entirely. Rows drop on LOOT_SLOT_CLEARED.
     M.AutoLootFree()
   end
-  Z.Print("Loot window open — click a row, then Award / ... / Close.")
 end
 
 -- Take every free row + coin off the open corpse (sub-threshold

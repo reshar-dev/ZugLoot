@@ -411,11 +411,12 @@ function M.ShowItem(itemLink, seconds)
   return true
 end
 
-function M.OnRoll(player, roll, rtype, excluded)
+function M.OnRoll(player, roll, rtype, excluded, srPlus)
   if not frame or not frame:IsVisible() then return end
   local minR, maxR = rangeFor(rtype)
   table.insert(M.rolls, { player = player, roll = roll, rtype = rtype,
     minR = minR, maxR = maxR, excluded = excluded,
+    sr_plus = srPlus, effective = (tonumber(roll) or 0) + (tonumber(srPlus) or 0),
     class = M.PlayerClass(player) })
   RenderRolls()
   timeLeft = (Z.MasterLootUI and Z.MasterLootUI.RollTimeout and Z.MasterLootUI.RollTimeout()) or 15 -- refresh on activity (LootBlare parity)

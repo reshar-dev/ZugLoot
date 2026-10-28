@@ -51,7 +51,7 @@ function M.TypeHex(rtype)
   return TYPE_COLORS[rtype] or "FFFFFFFF"
 end
 
--- Normalize one row to { name, roll, rtype, effective, min, max,
+-- Normalize one row to { name, roll, rtype, effective, sr_plus, min, max,
 -- excluded, class }. Missing max falls back to the kind cap.
 function M.Normalize(r)
   r = r or {}
@@ -70,6 +70,7 @@ function M.Normalize(r)
     rtype = rtype,
     rollType = rtype, -- alias: ML rows carry rollType, raider rows rtype
     effective = r.effective,
+    sr_plus = r.sr_plus,
     min = r.min or r.minR or 1,
     max = max,
     excluded = r.excluded,
@@ -77,14 +78,17 @@ function M.Normalize(r)
   }
 end
 
--- "56/98" for a roll, with " (=100)" when an SR bonus pushes the
--- effective past it. Min is always 1 by construction (all ranges are
--- 1-X), so max alone carries the range.
+-- "56/98" for a roll, with " (+10=100)" when an SR bonus applies
+-- (bonus first, then the total). Min is always 1 by construction (all
+-- ranges are 1-X), so max alone carries the range.
 function M.RangeText(r)
   local n = M.Normalize(r)
   local s = tostring(n.roll)
   if n.max ~= nil then s = s .. "/" .. tostring(n.max) end
-  if n.effective ~= nil and n.effective ~= n.roll then
+  local bonus = tonumber(n.sr_plus) or 0
+  if bonus > 0 then
+    s = s .. " (+" .. bonus .. "=" .. tostring(n.effective or n.roll) .. ")"
+  elseif n.effective ~= nil and n.effective ~= n.roll then
     s = s .. " (=" .. tostring(n.effective) .. ")"
   end
   return s
@@ -142,7 +146,7 @@ function M.Paint(leftFS, rightFS, rolls, opts)
     else
       table.insert(left, "|c" .. M.ClassHex(r.name, r.class) .. nm .. "|r")
       table.insert(right, "|c" .. M.TypeHex(r.rtype)
-        .. tostring(r.roll) .. "/" .. tostring(r.max) .. "|r")
+        .. M.RangeText(r) .. "|r")
     end
   end
   if Z.Util.ArrayCount(rows) == 0 and opts.waiting then

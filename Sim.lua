@@ -321,7 +321,6 @@ function M.QueueBossRun(sheet, raidKey, boss, drops, keep)
   M.running = true
   syncWindow()
   if Z.LootWindow then Z.LootWindow.Show("Simulated loot: " .. tostring(boss.name)) end
-  Z.Print("Loot window open — click Roll on an item.")
   return Z.Util.ArrayCount(drops)
 end
 

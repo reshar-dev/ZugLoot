@@ -1035,7 +1035,7 @@ function M.SyncRoll(roll, why)
     if r and r.name then
       table.insert(rows, { name = r.name, roll = r.roll,
         rollType = r.type, effective = r.effective or r.roll,
-        min = r.min, max = r.max })
+        sr_plus = r.sr_plus, min = r.min, max = r.max })
     end
   end
   d.rolls = rows
