@@ -196,8 +196,8 @@ end
 
 function M.Build()
   frame = CreateFrame("Frame", "ZugLootLootFrame", UIParent)
-  frame:SetWidth(220) frame:SetHeight(250)
-  -- Default RIGHT of center (clear of the ML roll detail at ~+90):
+  frame:SetWidth(250) frame:SetHeight(250)
+  -- Default RIGHT of center (clear of the ML roll detail at ~+105):
   -- raiders look right, the ML's windows tile center-left. Draggable.
   frame:SetPoint("CENTER", UIParent, "CENTER", 320, 100)
   frame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -218,7 +218,7 @@ function M.Build()
 
   -- Countdown bar floating above the frame (LootBlare placement).
   statusBar = CreateFrame("StatusBar", nil, frame)
-  statusBar:SetWidth(200) statusBar:SetHeight(16)
+  statusBar:SetWidth(230) statusBar:SetHeight(16)
   statusBar:SetPoint("TOP", frame, "TOP", 0, 20)
   statusBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
   statusBar:SetStatusBarColor(0.2, 0.7, 0.2, 1)
@@ -253,7 +253,7 @@ function M.Build()
 
   itemName = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   itemName:SetPoint("TOP", itemIcon, "BOTTOM", 0, -10)
-  itemName:SetWidth(200)
+  itemName:SetWidth(230)
   itemName:SetJustifyH("CENTER")
 
   -- Two-column roll list.
@@ -265,11 +265,11 @@ function M.Build()
   rightText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   rightText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -73)
   rightText:SetJustifyH("RIGHT")
-  rightText:SetWidth(120)
+  rightText:SetWidth(140)
   rightText:SetHeight(150)
 
   -- Dice buttons along the bottom.
-  local panelW = 220
+  local panelW = 250
   local bw, n = 32, 4
   local spacing = (panelW - (n * bw)) / (n + 1)
   for i = 1, n do

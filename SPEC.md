@@ -312,8 +312,8 @@ call ONLY (`MatchRollCall`: `Roll for X: /roll ...` dice line or full
 item link — Pysanka parity). Drop lists, winners, countdowns, stop
 lines, raid-roll numbering, bare names and non-ML senders never trigger.
 - **Loot window** (`LootWindow.lua`, raider-window style (220px dark
-  frame, icon + quality-colored name rows, roll detail with header icon
-  + two-column roll list) — always ours, never Blizzard's): on
+  frame loot overview; 250px roll detail, icon + quality-colored name
+  rows, header icon + two-column roll list) — always ours, never Blizzard's): on
   `LOOT_OPENED`, whoever opened the corpse (solo, any loot method, ML or
   not), EVERY corpse slot gets a row (RollFor parity): coin first, then
   roll-worthy items (quality ≥ the party's `GetLootThreshold`, 1 common
@@ -501,7 +501,7 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
   funnels through `ShowItem`, which refuses (returns false) when shut.
   Verifiable: `tests/test_raider_frame.lua` pins mode/allow/matrix +
   trigger paths per grouping and loot method.
-- Contents (LootBlare layout, 220×250): green countdown **status bar floating
+- Contents (LootBlare layout, 250×250): green countdown **status bar floating
   above the frame** with seconds text (green→orange→red, pulsing under 5s),
   big 40px item icon (shared handlers: hover = item tooltip, click =
   chat-link, ctrl-click = dress-up — identical on all five icons) +

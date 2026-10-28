@@ -61,7 +61,8 @@ M.BTN_MORE_W = 44
 -- Wide enough for "Award <name>" on ONE line (RollFor sizes rows to the
 -- widest content). 320 fits ~35-char names next to the ... button.
 -- (Close lives top-right as X, no bar width needed.)
-M.DETAIL_WIDTH = 220 -- raider-window width (was 320)
+M.DETAIL_WIDTH = 250 -- raider-window width (was 320, then 220:
+-- +30 for the SR+ suffix so "90/100 (+10=100)" fits the roll list)
 -- Detail auto-height: header block + roll rows + button bar. The roll
 -- list grows one line per roll instead of clipping at a fixed height —
 -- a 40-man raid roll shows every roller without scrolling.
@@ -1689,11 +1690,11 @@ function M.BuildDetailFrame()
       or type(f.CreateFontString) ~= "function" then
     return nil
   end
-  -- Raider-window style: 220px dark frame, 40px item icon + name header.
+  -- Raider-window style: 250px dark frame, 40px item icon + name header.
   -- Snug against the loot overview (which defaults left of center):
-  -- +240 puts a 20px gap between the frames, so the roll window sits
+  -- +255 puts a 20px gap between the frames, so the roll window sits
   -- just right of the list, near center. Draggable.
-  f:SetWidth(220) f:SetHeight(250)
+  f:SetWidth(250) f:SetHeight(250)
   f:SetPoint("CENTER", parent, "CENTER", 240, 40)
   f:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background",
     edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -1742,17 +1743,17 @@ function M.BuildDetailFrame()
   end
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOP", dicon, "BOTTOM", 0, -6)
-  title:SetWidth(200) title:SetJustifyH("CENTER")
+  title:SetWidth(230) title:SetJustifyH("CENTER")
   f.title = title
   local sub = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   sub:SetPoint("TOP", title, "BOTTOM", 0, -4)
-  sub:SetWidth(200) sub:SetJustifyH("CENTER")
+  sub:SetWidth(230) sub:SetJustifyH("CENTER")
   f.sub = sub
   -- Countdown bar floating above the frame (raider-window parity:
   -- green->orange->red, seconds text, pulses under 5s). Shown only
   -- while rolling; d.countdown/d.countdownDur own the values.
   local timerBar = CreateFrame("StatusBar", nil, f)
-  timerBar:SetWidth(200) timerBar:SetHeight(14)
+  timerBar:SetWidth(230) timerBar:SetHeight(14)
   timerBar:SetPoint("TOP", f, "TOP", 0, 18)
   timerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
   timerBar:SetStatusBarColor(0.2, 0.7, 0.2, 1)
@@ -1768,20 +1769,20 @@ function M.BuildDetailFrame()
   local rollsL = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   rollsL:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -120)
   rollsL:SetJustifyH("LEFT")
-  rollsL:SetWidth(110)
+  rollsL:SetWidth(130)
   rollsL:SetHeight(70)
   f.rollsL = rollsL
   local rollsR = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   rollsR:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -120)
   rollsR:SetJustifyH("RIGHT")
-  rollsR:SetWidth(100)
+  rollsR:SetWidth(110)
   rollsR:SetHeight(70)
   f.rollsR = rollsR
   -- Legacy single-text widget (kept so old paint/tests referencing
   -- f.rolls keep working; hidden, mirrors rollsL content).
   local rolls = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   rolls:SetPoint("TOP", sub, "BOTTOM", 0, -6)
-  rolls:SetWidth(200) rolls:SetJustifyH("LEFT")
+  rolls:SetWidth(230) rolls:SetJustifyH("LEFT")
   if rolls.Hide then rolls:Hide() end
   f.rolls = rolls
   -- Button bar pinned to the BOTTOM (never overlapping the roll list):

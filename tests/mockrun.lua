@@ -316,7 +316,7 @@ local function hasAnchor(pts, want)
   return false
 end
 -- Raider-style columns: header icon + two roll columns (names left,
--- rolls right), fixed 220-wide frame.
+-- rolls right), fixed 250-wide frame.
 assert(df.dicon ~= nil, "detail header icon built");
 assert(df.rollsL ~= nil and df.rollsR ~= nil, "two roll columns built");
 assert(hasAnchor(df.rollsL.points, "TOPLEFT"), "left column anchored");
