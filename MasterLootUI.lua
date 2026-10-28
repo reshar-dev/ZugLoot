@@ -1092,6 +1092,7 @@ end
 -- The row leaves the list only on LOOT_SLOT_CLEARED for that slot — never
 -- optimistically here — so a failed LootSlot (locked, full bags, range)
 -- leaves the row up for retry.
+-- advisory, never a refusal: the server owns the verdict (issue #25).
 function M.LootCorpseSlot(link, itemID, winnerName, slotHint)
   -- Loot gate FIRST: no open corpse (walked away, corpse closed)
   -- means no call can possibly land. Report "nolooot" so the caller logs
@@ -1104,9 +1105,8 @@ function M.LootCorpseSlot(link, itemID, winnerName, slotHint)
   -- "gray [done], nothing looted, no error" ghost. When the hinted slot
   -- no longer holds THIS item, re-scan the corpse for it; when the item
   -- is gone entirely, report "gone" (caller leaves the row for rescan).
-  -- Range gate SECOND: a moved-away player must never issue the call —
-  -- report "norange" so the caller logs + keeps the list intact.
-  if M.CheckLootRange() == "norange" then return "norange" end
+  -- Client-side range is advisory only ("far" logs nothing, blocks
+  -- nothing): the corpse read + server verdict own the outcome.
   local slot = M.VerifySlot(itemID, slotHint)
   if slot == "gone" then return "gone" end
   if not slot then return "noslot" end
@@ -1330,17 +1330,23 @@ function M.LiveCorpseKey()
   return M.CorpseKey(guid, target, ids, coin)
 end
 
--- Range gate: block a loot attempt when the player has moved away from
--- the looted corpse. 1.12 has no movement event, so the signal is
--- CheckInteractDistance("target", 1) (loot range) against the corpse
--- pinned at scan time — by GUID when available (unique corpse), else by
--- target name. Same corpse + out of range = moved away: block early
--- ("norange"), list untouched, caller logs. Anything unverifiable (no
--- live corpse, target changed/cleared, GUID-less different corpse with
--- the same name) allows the attempt — the server has the final say.
--- Only live corpse loot is gated (GetNumLootItems() > 0); sim/award
--- bookkeeping never is.
 function M.CheckLootRange()
+  -- Killed (issue #25): a hostile client-side range reading must never
+  -- refuse a real award. CheckInteractDistance("target", 1) disagrees
+  -- with the open loot session on multi-page bosses (Nefarian: pinned
+  -- target still the corpse, session readable, server-side handoff
+  -- valid) and blocks the award that would clear the corpse. The range
+  -- read is advisory only — the server owns the verdict: report "far"
+  -- for the log, never refuse. VerifySlot past this point already
+  -- re-reads the corpse, so an actually-gone item still resolves
+  -- "gone" downstream. Away-from-corpse is NOT a signal: a genuinely
+  -- unreachable corpse fails at the corpse read / server call, and the
+  -- server's own out-of-range error surfaces like any other failed
+  -- call (row kept, error shown) — a client-side pre-block can only
+  -- false-positive (issue #25: Nefarian awards refused with the corpse
+  -- open and readable).
+  -- Kept as the single range reader so callers/tests keep one signal;
+  -- callers treat "far" exactly like in-range (proceed).
   if not (GetNumLootItems and (GetNumLootItems() or 0) > 0) then
     return true
   end
@@ -1350,15 +1356,14 @@ function M.CheckLootRange()
   local guid = M.TargetGUID()
   if pinnedGUID then
     -- GUID-pinned: a different GUID (or none) is a different corpse —
-    -- allow, the key check owns identity. Same GUID + out of range =
-    -- moved away from THIS corpse: block.
+    -- identity belongs to the corpse key, not to range.
     if not guid or guid ~= pinnedGUID then return true end
   else
     local okCur, cur = pcall(UnitName, "target")
     if not okCur or cur ~= pinnedName then return true end
   end
   local okR, inRange = pcall(CheckInteractDistance, "target", 1)
-  if okR and not inRange then return "norange" end
+  if okR and not inRange then return "far" end
   return true
 end
 
@@ -1475,7 +1480,6 @@ function M.Award(itemID, winnerName, source, tradeTo)
     if rc ~= true and rc ~= "noslot" then
       local reason = "loot assignment failed"
       if rc == "nolooot" then reason = "no corpse loot open"
-      elseif rc == "norange" then reason = "you moved away from the corpse"
       elseif rc == "gone" then reason = "item is no longer on corpse"
       elseif rc == false and err then reason = tostring(err)
       end
@@ -1723,6 +1727,31 @@ function M.SetBossThreshold(n)
   if not (n and n >= 1 and n <= 4) then return false end
   n = math.floor(n)
   if Z.DB then Z.DB.bossThreshold = n end
+  return true
+end
+-- Announce rarity: only drops at/above this quality ride the raid
+-- channel (1 common .. 4 epic). 3 = rare (blue), the default: greens
+-- stay in the loot window, off chat. Same choice table as thresholds.
+function M.AnnounceQualityChoices()
+  return M.ThresholdChoices()
+end
+function M.AnnounceQuality()
+  local n = Z.DB and tonumber(Z.DB.announceQuality) or nil
+  if n and n >= 1 and n <= 4 then return math.floor(n) end
+  return 3 -- default: rare (blue)
+end
+function M.AnnounceQualityLabel(n)
+  n = tonumber(n)
+  if not (n and n >= 1 and n <= 4) then return "Rare (3)" end
+  return M.ThresholdLabel(n)
+end
+-- Validated setter: stores the preference (1-4). Anything else refuses.
+-- Applies to the drop announce on the next corpse.
+function M.SetAnnounceQuality(n)
+  n = tonumber(n)
+  if not (n and n >= 1 and n <= 4) then return false end
+  n = math.floor(n)
+  if Z.DB then Z.DB.announceQuality = n end
   return true
 end
 function M.CurrentThreshold()
@@ -2514,16 +2543,28 @@ function M.OnLootOpened()
     -- already shows every row, and a solo corpse needs no chat record.
     -- (Grouped announces ride SayGroup to the raid/party channel;
     -- quiet there too via HushAround — the group already sees them.)
+    -- Rarity gate (Setup "Announce", default rare/blue): only drops
+    -- at/above the pick ride the channel; below-min items still list in
+    -- the loot window, still log, still roll — they're just not spammed.
+    -- Unknown quality (nil — cold cache, no row) can't be classified,
+    -- so it announces (old behavior, no data loss).
     -- Guarded: harnesses may load MasterLootUI without Core (no Hush).
     local solo = Z.SRSecurity and Z.SRSecurity.IsSolo
       and Z.SRSecurity.IsSolo()
     local hushed = Z.HushAround or function(fn) fn() end
-    if not solo then
+    local minQ = (M.AnnounceQuality and M.AnnounceQuality()) or 3
+    local shown = {}
+    for i = 1, Z.Util.ArrayCount(found) do
+      local f = found[i]
+      local q = f and tonumber(f.quality) or nil
+      if q == nil or q >= minQ then table.insert(shown, f) end
+    end
+    if not solo and Z.Util.ArrayCount(shown) > 0 then
       hushed(function()
-        Z.Comm.WarnGroup(mobName .. " dropped " .. Z.Util.ArrayCount(found)
-          .. " item" .. (Z.Util.ArrayCount(found) == 1 and ":" or "s:"))
-        for i = 1, Z.Util.ArrayCount(found) do
-          local f = found[i]
+        Z.Comm.WarnGroup(mobName .. " dropped " .. Z.Util.ArrayCount(shown)
+          .. " item" .. (Z.Util.ArrayCount(shown) == 1 and ":" or "s:"))
+        for i = 1, Z.Util.ArrayCount(shown) do
+          local f = shown[i]
           local link = M.ChatItemLink(f.itemID or Z.Util.ItemID(f.link), f.link)
           Z.Comm.WarnGroup(i .. ". " .. tostring(link or f.link))
         end

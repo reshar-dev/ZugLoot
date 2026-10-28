@@ -321,8 +321,10 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
   one-click free rows that loot straight to the player in any loot method.
   PAGING: the client shows ~5 slots per loot page, but `GetNumLootItems`
   reports the WHOLE corpse — `ScanCorpse` reads slots 1..n, so one open
-  lists every page and the drop announce names every roll item with no
-  re-loot. Every slot read is pcall-guarded: a slot that ERRORS reads
+  lists every page and the drop announce names every announced item
+  with no re-loot (rarity gate: only drops at/above the Setup
+  "Announce" quality, default rare/blue, ride the raid channel —
+  below-min items still list, log, and roll, just off chat). Every slot read is pcall-guarded: a slot that ERRORS reads
   as empty, never aborts the scan mid-list (an abort strands the
   window half-built — the multi-page lockup). Partial scans still
   list, and the list converges as slots collapse into view: each
@@ -365,13 +367,16 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
   corpse as `"gone"` and rescanned every row away. Rescans with no open
   corpse likewise keep all rows (an unreadable corpse proves nothing
   left). Sim/non-row awards bypass the gate (no corpse).
-  Range gate: "moved away" is read off `CheckInteractDistance("target",
-  1)` against the corpse pinned at scan — by GUID when the client offers
-  one, else by target name. Same corpse + out of range = moved: the click
-  is blocked BEFORE the corpse call (`"not looting"` + chat log telling
-  the player to loot the corpse again), the list is untouched — nothing
-  dims, nothing clears. A different GUID is never a range block (identity
-  belongs to the corpse key).
+  Range signal: `CheckInteractDistance("target", 1)` against the
+  corpse pinned at scan — by GUID when the client offers one, else by
+  target name — is ADVISORY ONLY, never a refusal (issue #25: on
+  multi-page bosses like Nefarian the client-side range read disagrees
+  with the open loot session and blocked real awards). Same corpse +
+  out of range logs an informational note and the attempt proceeds —
+  the corpse read (`VerifySlot`) + the server verdict own the outcome:
+  a genuinely unreachable corpse fails at the call like any other
+  failed call (row kept, error shown). A different GUID is never a
+  range signal (identity belongs to the corpse key).
   Corpse identity: `UnitExists("target")` returns `(exists, guid)` on this
   client (Nampower/SuperWoW extension — DoiteAuras/Luna/Aegis_SBR rely on
   the same second return; GUIDs double as unit tokens). The corpse key is

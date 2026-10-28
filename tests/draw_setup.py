@@ -43,7 +43,7 @@ TITLES = [m.group(1).strip().split("—")[0].strip()
 BUTTONS = {
     "Rolling": ["Auto-roll: ON", "Roll window: ML"],
     "Looting": ["Loot frame: ZUG", "ML on boss: OFF", "Back to group: OFF",
-                "Threshold: Epic (4)"],
+                "Threshold: Epic (4)", "Announce: Rare (3)"],
     "Danger zone": ["Reset all settings"],
 }
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
@@ -68,7 +68,7 @@ N_CATS = 6  # AutoRoll.CATEGORIES count
 _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
     "Rolling": BH + 8 + 45,  # duo pair + timer cell (readout/track/captions)
-    "Looting": BH + 8 + BH + 8 + 21,  # drop-count line only
+    "Looting": BH + 8 + BH + 8 + BH + 8 + 21,  # 3 duo rows + drop-count line
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,

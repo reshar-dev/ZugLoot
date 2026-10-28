@@ -202,6 +202,39 @@ eq(LW.doAction(17001, "roll"), "rolling", "ignored row re-rollable on second cha
 ok(not LW.Find(17001).ignored, "roll clears the ignored mark")
 ok(not LW.LootingFinished(), "actionable again: looting not finished")
 
+-- 7. Issue #25 (Nefarian): a hostile client-side range reading must
+-- never refuse a real award. Corpse open, slot verified, target still
+-- the corpse — CheckInteractDistance says out of range (huge-boss
+-- hitbox disagrees with the open loot session), but the handoff needs
+-- no range and the corpse is readable, so the award must go through.
+loot = { { id = 18001, link = "item:18001:0:0:0", quality = 4 } }
+candidates = { "MageC" }
+ML.lootOpen = true
+ML.lootGUID = "guid-nef"
+ML.lootTarget = "Nefarian"
+UnitExists = function(u)
+  if u == "target" then return true, "guid-nef" end
+  return nil
+end
+CheckInteractDistance = function() return false end
+LW.SetItems({ { itemID = 18001, link = "item:18001:0:0:0", quality = 4, slot = 1 } }, "loot")
+masterCalls = {}
+local logged = {}
+local realPrint = ZugLoot.Print
+ZugLoot.Print = function(m) table.insert(logged, tostring(m)) end
+local res7 = ML.Award(18001, "MageC")
+ZugLoot.Print = realPrint
+ok(res7 ~= false, "award succeeds despite out-of-range reading")
+eq(#masterCalls, 1, "handoff issued on the verified slot")
+local movedMsg = false
+for i = 1, #logged do
+  if string.find(logged[i], "moved away", 1, true) then movedMsg = true end
+end
+ok(not movedMsg, "no moved-away refusal on a readable corpse")
+UnitExists = nil
+CheckInteractDistance = nil
+ML.lootGUID, ML.lootTarget = nil, nil
+
 if T.fail == 0 then
   print("corpse slot shift and candidate invariants passed")
 else

@@ -1744,9 +1744,10 @@ function M.RenderSetup()
   -- Left column, top. Two-across pairs: takeover | ML-on-boss /
   -- back-to-group | threshold, then the info block underneath.
   do
-    -- pair row (24) + 8 + pair row (24) + 8 + the drop count line
-    -- (~13px + 8 gap = 21), clearing the bottom border.
-    local contentH = BH + 8 + BH + 8 + 21
+    -- pair row (24) + 8 + pair row (24) + 8 + announce/threshold row
+    -- (24) + 8 + the drop count line (~13px + 8 gap = 21), clearing the
+    -- bottom border.
+    local contentH = BH + 8 + BH + 8 + BH + 8 + 21
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Looting")
@@ -1814,14 +1815,29 @@ function M.RenderSetup()
     b10:SetScript("OnClick", function() M.ToggleThresholdDropdown(b10) end)
     Tip(b10, "Boss threshold", "Loot threshold applied when auto-switching to master loot on a boss.",
       "Previous threshold is remembered and restored on switch-back.")
+    -- Announce rarity dropdown: only drops at/above this quality are
+    -- announced to the raid (1 common .. 4 epic). Rare (blue, 3) default.
+    local bAnn = duoButton(panel, 0, -PAD_TOP - BH - 8 - BH - 8)
+    local function annLabel()
+      local MLUI = Z.MasterLootUI
+      if MLUI and MLUI.AnnounceQualityLabel and MLUI.AnnounceQuality then
+        return "Announce: " .. MLUI.AnnounceQualityLabel(MLUI.AnnounceQuality())
+      end
+      return "Announce: Rare (3)"
+    end
+    bAnn:SetText(annLabel())
+    bAnn:SetScript("OnClick", function() M.ToggleAnnounceDropdown(bAnn) end)
+    Tip(bAnn, "Announce rarity", "Only announce drops at/above this quality to the raid.",
+      "Rare (blue) default — greens stay in the loot window, off chat.")
     local info = FS(panel, "GameFontHighlightSmall",
       "Drops logged: " .. tostring(Z.Util.ArrayCount((Z.DB and Z.DB.drops) or {})) .. "  (/zl log)")
-    info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8)
+    info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8 - BH - 8)
     info:SetWidth(colW - PAD_SIDE * 2) info:SetJustifyH("LEFT")
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.mlOnBoss = b8
     M.setupBtns.backToGroup = b9
     M.setupBtns.bossThreshold = b10
+    M.setupBtns.announceQuality = bAnn
     table.insert(panels, { title = "Looting", panel = panel, top = ly })
     ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
@@ -2083,15 +2099,17 @@ function M.DebugHeaderButtons()
 end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
--- switching pair + the boss-threshold dropdown button + the raider-frame
--- policy button + the auto-raid-roll category buttons + the sub-threshold
--- auto-loot button. Returns { mlOnBoss, backToGroup, bossThreshold,
+-- switching pair + the boss-threshold dropdown button + the announce
+-- rarity dropdown button + the raider-frame policy button + the
+-- auto-raid-roll category buttons + the sub-threshold auto-loot button.
+-- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
 -- raiderFrame, autoRaidRoll, autoLootBelow } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
-    bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
-    autoRaidRoll = sb.autoRaidRoll, autoLootBelow = sb.autoLootBelow }
+    bossThreshold = sb.bossThreshold, announceQuality = sb.announceQuality,
+    raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
+    autoLootBelow = sb.autoLootBelow }
 end
 
 -- Test hook: the setup-tab panels in display order
@@ -2179,18 +2197,101 @@ function M.ToggleThresholdDropdown(anchor)
   if dd.Show then dd:Show() end
   M.threshDropdown = dd
 end
+-- Announce-rarity dropdown (Setup tab): one row per quality
+-- (Common 1 .. Epic 4). Picking stores the preference via
+-- MasterLootUI.SetAnnounceQuality and relabels the button. Toggle-shut
+-- on re-click; headless-testable through AnnounceQualityChoices/
+-- SetAnnounceQuality.
+M.announceDropdown = nil
+function M.CloseAnnounceDropdown()
+  if M.announceDropdown then
+    if M.announceDropdown.Hide then M.announceDropdown:Hide() end
+    M.announceDropdown = nil
+  end
+end
+function M.ToggleAnnounceDropdown(anchor)
+  local MLUI = Z.MasterLootUI
+  if not (MLUI and MLUI.AnnounceQualityChoices and MLUI.SetAnnounceQuality) then return end
+  if not CreateFrame then return end -- headless: data layer only
+  if M.announceDropdown then
+    M.CloseAnnounceDropdown()
+    return -- was open: toggle shut
+  end
+  local choices = MLUI.AnnounceQualityChoices()
+  if Z.Util.ArrayCount(choices) == 0 then return end
+  local parent = M.frame or UIParent
+  local dd = CreateFrame("Frame", "ZugLootAnnounceDropdown", parent)
+  if type(dd) ~= "table" or type(dd.SetWidth) ~= "function" then return end
+  if dd.SetFrameStrata then pcall(dd.SetFrameStrata, dd, "TOOLTIP") end
+  if dd.SetBackdrop then
+    dd:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8x8",
+      edgeFile = "Interface/Buttons/WHITE8x8", edgeSize = 0.5 })
+  end
+  if dd.SetBackdropColor then dd:SetBackdropColor(0, 0, 0, 1) end
+  if dd.SetBackdropBorderColor then dd:SetBackdropBorderColor(0.2, 0.2, 0.2, 1) end
+  if dd.EnableMouse then dd:EnableMouse(true) end
+  local width, y = 0, -4
+  dd.rows = {}
+  for i = 1, Z.Util.ArrayCount(choices) do
+    local c = choices[i] -- fresh local per iteration for the closure
+    local b = CreateFrame("Button", nil, dd)
+    if type(b) ~= "table" or type(b.SetWidth) ~= "function" then break end
+    b:SetHeight(16)
+    b:SetPoint("TOPLEFT", dd, "TOPLEFT", 5, y)
+    b:SetPoint("RIGHT", dd, "RIGHT", -5, 0)
+    if b.SetBackdrop then b:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8x8" }) end
+    local function hover(a)
+      if b.SetBackdropColor then b.SetBackdropColor(0.125, 0.624, 0.976, a) end
+    end
+    hover(0)
+    if b.SetScript then
+      b:SetScript("OnEnter", function() hover(0.2) end)
+      b:SetScript("OnLeave", function() hover(0) end)
+      b:SetScript("OnClick", function()
+        M.CloseAnnounceDropdown()
+        if MLUI.SetAnnounceQuality(c.value) then M.Refresh() end
+      end)
+    end
+    local fs
+    if b.CreateFontString then
+      fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      fs:SetPoint("LEFT", b, "LEFT", 5, 0)
+      if fs.SetText then fs:SetText(c.label) end
+      local w = 0
+      if fs.GetStringWidth then w = fs:GetStringWidth() or 0 end
+      if w == 0 then w = string.len(c.label) * 7 end
+      if w > width then width = w end
+    end
+    b.choice = c
+    table.insert(dd.rows, b)
+    y = y - 18
+  end
+  dd:SetWidth(width + 20)
+  dd:SetHeight(-y + 5)
+  if dd.ClearAllPoints then dd:ClearAllPoints() end
+  if anchor and dd.SetPoint then
+    -- Below the button (setup rows grow downward).
+    dd:SetPoint("TOP", anchor, "BOTTOM", 0, -2)
+  elseif dd.SetPoint and M.frame then
+    dd:SetPoint("CENTER", M.frame, "CENTER", 0, 0)
+  end
+  if dd.Show then dd:Show() end
+  M.announceDropdown = dd
+end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
--- switching pair + the boss-threshold dropdown button + the raider-frame
--- policy button + the auto-raid-roll category buttons + the sub-threshold
--- auto-loot button + the roll-timer slider/readout. Returns { mlOnBoss,
--- backToGroup, bossThreshold, raiderFrame, autoRaidRoll, autoLootBelow,
+-- switching pair + the boss-threshold dropdown button + the announce
+-- rarity dropdown button + the raider-frame policy button + the
+-- auto-raid-roll category buttons + the sub-threshold auto-loot button +
+-- the roll-timer slider/readout. Returns { mlOnBoss, backToGroup,
+-- bossThreshold, announceQuality, raiderFrame, autoRaidRoll, autoLootBelow,
 -- rollSlider, rollReadout } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
-    bossThreshold = sb.bossThreshold, raiderFrame = sb.raiderFrame,
-    autoRaidRoll = sb.autoRaidRoll, autoLootBelow = sb.autoLootBelow,
+    bossThreshold = sb.bossThreshold, announceQuality = sb.announceQuality,
+    raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
+    autoLootBelow = sb.autoLootBelow,
     rollSlider = sb.rollSlider, rollReadout = sb.rollReadout }
 end
 

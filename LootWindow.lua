@@ -1119,6 +1119,17 @@ function M.OnRowClick(itemID, clickSlot)
   if M.blizzardTakeover == false then return "passthrough" end
   local slot = clickSlot or (it and it.slot)
   if it and slot and (it.coin or it.free or solo) then
+    -- Range advisory: log when the client thinks the pinned corpse is
+    -- out of reach ("far"), but NEVER refuse: the corpse read + server
+    -- verdict own the outcome (issue #25). Kept informational — the
+    -- player may genuinely have moved, so say so.
+    local MLUI = Z.MasterLootUI
+    if MLUI and MLUI.CheckLootRange and MLUI.CheckLootRange() == "far"
+        and Z.Print then
+      Z.Print("Note: " .. tostring(M.DisplayName(it))
+        .. " reads out of loot range — attempting anyway;"
+        .. " the server decides.")
+    end
     local issued = nil
     if Z.MasterLootUI and Z.MasterLootUI.LootCorpseSlot then
       local me = nil
@@ -1137,15 +1148,9 @@ function M.OnRowClick(itemID, clickSlot)
       end
       return "gone"
     end
-    -- Moved away: block early, list untouched, log it. Re-loot the same
-    -- creature to resume — the window (rolls included) is still open.
-    if issued == "norange" then
-      Z.Print("Not looting " .. tostring(M.DisplayName(it))
-        .. ": you moved away from the corpse. "
-        .. "Loot it again to resume — the window is still open.")
-      return "not looting"
-    end
-    -- No open corpse (walked away / closed): same block, same intact
+    -- "far" is the range ADVISORY from CheckLootRange (client thinks
+    -- the corpse is out of reach): proceed, never refuse (issue #25).
+    -- "nolooot" (corpse closed) blocks with the list intact.
     -- list. Re-looting resumes the window whole.
     if issued == "nolooot" then
       Z.Print("Not looting " .. tostring(M.DisplayName(it))

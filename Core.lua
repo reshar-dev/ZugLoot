@@ -92,6 +92,9 @@ function Z.InitDB()
   -- 4 epic). Default uncommon: green+ rolls, grey does not.
   -- Absent = default.
   if ZugLootDB.bossThreshold == nil then ZugLootDB.bossThreshold = 2 end
+  -- Announce rarity (Setup dropdown, 1 common .. 4 epic): only drops
+  -- at/above this quality ride the raid channel. Rare (blue, 3) default.
+  if ZugLootDB.announceQuality == nil then ZugLootDB.announceQuality = 3 end
   -- Per-category auto raid-roll (Setup Automation tab): true =
   -- raid-roll when the corpse opens, absent = OFF. Migrates the old
   -- NEED-vote table (autoNeed = { ZG=1, ... }) on first read in

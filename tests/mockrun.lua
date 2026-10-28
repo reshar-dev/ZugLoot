@@ -756,6 +756,23 @@ assert(Z.MainWindow.threshDropdown == nil, "dropdown closes on pick");
 Z.DB.bossThreshold = 4;
 Z.DB.mlOnBoss = false;
 Z.DB.backToGroup = false;
+-- announce rarity dropdown: button shows the pick, 4 rows, click stores.
+Z.DB.announceQuality = nil;
+Z.MainWindow.SelectTab("setup");
+local st2a = Z.MainWindow.DebugSetupToggles();
+assert(st2a.announceQuality ~= nil, "announce button built");
+assert(string.find(st2a.announceQuality.label or "", "Rare", 1, true) ~= nil,
+  "announce button defaults to rare, got: " .. tostring(st2a.announceQuality.label));
+Z.DB.announceQuality = 4;
+Z.MainWindow.ToggleAnnounceDropdown(st2a.announceQuality);
+assert(Z.MainWindow.announceDropdown ~= nil, "announce dropdown opened");
+assert(#Z.MainWindow.announceDropdown.rows == 4, "four announce rows");
+assert(Z.MainWindow.announceDropdown.rows[1].choice.value == 1, "common first");
+assert(Z.MainWindow.announceDropdown.rows[4].choice.label == "Epic (4)", "epic labeled");
+Z.MainWindow.announceDropdown.rows[4]:GetScript("OnClick")();
+assert(Z.DB.announceQuality == 4, "dropdown click stores epic");
+assert(Z.MainWindow.announceDropdown == nil, "announce dropdown closes on pick");
+Z.DB.announceQuality = nil;
 -- raider-frame policy toggle: ML (default) <-> ALL, label follows.
 Z.DB.raiderFrame = nil;
 Z.MainWindow.SelectTab("setup");
