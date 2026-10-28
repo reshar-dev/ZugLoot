@@ -2106,18 +2106,30 @@ function M.LootThreshold()
 end
 function M.ScanSlot(slot, threshold)
   if not GetNumLootItems then return nil end
+  -- Every client call below is pcall-guarded: a slot that ERRORS
+  -- (rather than returning nil) must read as empty, never abort the
+  -- scan. A mid-scan abort strands the window half-built with no
+  -- rows — the reported multi-page lockup. VerifySlot and
+  -- LiveCorpseKey already follow this discipline; the scan is the
+  -- last unguarded reader.
+  local function isCoin(s)
+    if not (Z.LootWindow and Z.LootWindow.IsCoinSlot) then return false end
+    local ok, v = pcall(Z.LootWindow.IsCoinSlot, s)
+    return ok and v and true or false
+  end
   -- Coin first: no link, texture + amount text from the slot info.
   -- Zero-copper corpses still carry an (empty) coin slot client-side —
   -- skip it so wolves etc. don't grow a phantom "0 Copper" row.
   -- Texture fallback chain: slot texture, then the stock gold-coin icon
   -- (never the "?" placeholder — coin always has art on 1.12).
-  if Z.LootWindow and Z.LootWindow.IsCoinSlot
-      and Z.LootWindow.IsCoinSlot(slot) then
+  if isCoin(slot) then
     local tex, slotName = nil, nil
     if GetLootSlotInfo then
-      local a, b = GetLootSlotInfo(slot)
-      if type(a) == "string" then tex = a end
-      if type(b) == "string" then slotName = b end
+      local ok, a, b = pcall(GetLootSlotInfo, slot)
+      if ok then
+        if type(a) == "string" then tex = a end
+        if type(b) == "string" then slotName = b end
+      end
     end
     if Z.LootWindow.IsEmptyCoin and Z.LootWindow.IsEmptyCoin(slotName) then
       return nil
@@ -2128,7 +2140,8 @@ function M.ScanSlot(slot, threshold)
       name = slotName or "Coin", coin = true }
   end
   if not GetLootSlotLink then return nil end
-  local link = GetLootSlotLink(slot)
+  local okL, link = pcall(GetLootSlotLink, slot)
+  if not okL then return nil end
   if not link then return nil end
   -- RollFor reads everything off the slot: GetLootSlotInfo gives
   -- texture + quantity in one call, GetItemInfo gives quality.
@@ -2138,16 +2151,18 @@ function M.ScanSlot(slot, threshold)
   local tex, qty, slotName, slotQ = nil, nil, nil, nil
   if GetLootSlotInfo then
     -- Vanilla: (texture, name, quantity, quality); retail adds args.
-    local a, b, c, d = GetLootSlotInfo(slot)
-    tex, slotName, qty = a, b, c
-    if type(qty) ~= "number" then qty = nil end
-    if type(tex) ~= "string" then tex = nil end
-    if type(d) == "number" then slotQ = d end
+    local ok, a, b, c, d = pcall(GetLootSlotInfo, slot)
+    if ok then
+      tex, slotName, qty = a, b, c
+      if type(qty) ~= "number" then qty = nil end
+      if type(tex) ~= "string" then tex = nil end
+      if type(d) == "number" then slotQ = d end
+    end
   end
   local q = slotQ
   if q == nil and GetItemInfo then
-    local _, _, qq = GetItemInfo(link)
-    q = qq
+    local ok, _, _, qq = pcall(GetItemInfo, link)
+    if ok then q = qq end
   end
   q = tonumber(q) or 0
   local entry = { link = link, quality = q,
@@ -2190,13 +2205,28 @@ function M.ScanCorpse(threshold)
   if not GetNumLootItems then return found, coin, free, grouped end
   threshold = threshold or M.LootThreshold()
   local n = GetNumLootItems() or 0
+  local readable = 0
   for slot = 1, n do
     local e = M.ScanSlot(slot, threshold)
     if e then
+      readable = readable + 1
       if e.coin then table.insert(coin, e)
       elseif e.group then table.insert(grouped, e)
       elseif e.free then table.insert(free, e)
       else table.insert(found, e) end
+    end
+  end
+  -- Scan-gap diagnostic (issue #25): the client reports n slots but
+  -- fewer read back — page-gated reads, erroring slots, or empties
+  -- all look the same here. Logged under /zl lootdebug with the
+  -- numbers, so the next big-corpse loot yields ground truth instead
+  -- of a silent short list. Never blocks: partial scans still list.
+  M.lastScanGap = nil
+  if readable < n and Z.LootWindow and Z.LootWindow.lootDebug then
+    M.lastScanGap = { reported = n, readable = readable }
+    if Z.Print then
+      Z.Print("lootdebug: scan gap: " .. tostring(n) .. " slots reported, "
+        .. tostring(readable) .. " readable")
     end
   end
   return found, coin, free, grouped
