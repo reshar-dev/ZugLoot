@@ -394,10 +394,25 @@ end
 -- message is already in chat, so re-announcing would double every line.
 -- Sim passes announce=true: fake rolls have no system message, so this
 -- line IS their chat presence — same text the raid would see live.
--- Returns the landed entry, or nil when ignored (allowance/closed).
+-- Tie re-roll scoping: an open tie round (roll.tied set by the tie
+-- button) takes rolls from the tied ONLY — every other /roll is
+-- parked (returns nil, never lands, never mirrors). Fresh rounds
+-- (no tie list) take everyone. The window mirrors the gate: it only
+-- ever shows landed rolls, so non-tied rolls simply never appear.
+-- Returns the landed entry, or nil when ignored (allowance/closed/
+-- not-tied).
 function M.AddRoll(player, rv, minR, maxR, opts)
   local roll = M.roll
   if not roll or (roll.itemID == nil) then return nil end
+  -- Tie round: the tied ONLY. Everyone else parks (their /roll
+  -- already shows in chat as a system line — we just never land it).
+  if Z.Util.ArrayCount(roll.tied or {}) > 0 then
+    local ok = false
+    for i = 1, Z.Util.ArrayCount(roll.tied) do
+      if roll.tied[i] == player then ok = true break end
+    end
+    if not ok then return nil end
+  end
   local seen = 0
   for i = 1, Z.Util.ArrayCount(roll.rolls) do
     if roll.rolls[i].name == player then seen = seen + 1 end
@@ -455,8 +470,12 @@ function M.AnnounceRoll(entry)
 end
 
 
--- Continue rolling a FINISHED round: reopen intake on the same window
--- with the landed rolls kept (unlike "Roll again", which starts fresh).
+-- Continue rolling a FINISHED round: reopen intake on the same window.
+-- Two paths, split by the stamp: a TIE stamp (stamp.tied set by the
+-- tie re-roll button) opens a fresh tie round scoped to the tied —
+-- landed rolls do NOT carry (old rolls must not shadow the re-roll);
+-- a plain stamp reopens with the landed rolls kept (unlike "Roll
+-- again", which starts fresh).
 -- Only from the award phase: needs the finish stamp (same item) and no
 -- live roll. Carries mode/silent/roster over; SIM rounds feed
 -- no auto-fakes (the queue entry was consumed at start — the ML collects
@@ -483,6 +502,23 @@ function M.ContinueRoll(itemID)
   for i = 1, Z.Util.ArrayCount(d.rolls or {}) do
     local r = d.rolls[i]
     if r and r.name then table.insert(kept, r) end
+  end
+  -- Tie re-roll round: the award window offered Tieroll instead of
+  -- awards, so the stranded finish must reopen intake SCOPED to the
+  -- tied (roll.tied, carried on the stamp). Landeds do NOT carry:
+  -- the tie round is a fresh contest between the tied only — old
+  -- rolls (tied AND untied) must not shadow the re-roll. Allowance
+  -- guards still apply to the tied. Nothing runs without the tie on
+  -- the stamp: ContinueRoll is the manual path, never the tie path.
+  if Z.Util.ArrayCount(stamp.tied or {}) > 0 then
+    local tieRoll = M.BeginRoll(itemID, stamp.itemLink or ("item:" .. tostring(itemID)),
+      stamp.mode or "SR", stamp.silent)
+    if not tieRoll then return nil end
+    if stamp.roster then tieRoll.roster = stamp.roster end
+    if stamp.n then tieRoll.n = stamp.n end
+    tieRoll.tied = stamp.tied
+    M.lastRound = nil -- consumed: one continue per finish
+    return tieRoll
   end
   local roll = M.BeginRoll(itemID, stamp.itemLink or ("item:" .. tostring(itemID)),
     stamp.mode or "SR", stamp.silent)
@@ -629,7 +665,7 @@ function M.FinishRoll(itemID)
   if M.RefuseWhenFrozen(roll.itemID) then return "frozen" end
   M.lastRound = { itemID = roll.itemID, itemLink = roll.itemLink,
     mode = roll.mode, silent = roll.silent,
-    roster = roll.roster, n = roll.n }
+    roster = roll.roster, n = roll.n, tied = roll.tied }
   M.EndRoll()
   local sheet = Z.DB and Z.DB.sheet
   local res = Z.Resolver.ResolveItem(sheet or { items = {}, won = {} },
@@ -651,6 +687,8 @@ function M.FinishRoll(itemID)
         Z.LootWindow.DetailOnFinish(roll.itemID, data)
       end
       if Z.Util.ArrayCount(res.tied) > 0 then
+        M.AnnounceTieRoll(M.TieNames(data), roll.itemID, roll.itemLink,
+          roll.mode == "SIM")
         Z.Print("Tie at top — tied players re-roll.")
         return "tie"
       end
@@ -674,6 +712,11 @@ function M.FinishRoll(itemID)
     Z.LootWindow.DetailOnFinish(roll.itemID, data)
   end
   if Z.Util.ArrayCount(res.tied) > 0 then
+    -- Tie call: who must roll again + the item link goes to chat
+    -- (player links + item link, same builders as the verdict), then
+    -- the window offers the tie re-roll INSTEAD of any award.
+    M.AnnounceTieRoll(M.TieNames(data), roll.itemID, roll.itemLink,
+      roll.mode == "SIM")
     Z.Print("Tie at top — tied players re-roll.")
     return "tie"
   end
@@ -787,6 +830,14 @@ end
 -- Verifiable: tests pin text + channel per grouping and role.
 function M.ResultLine(roll, res)
   local itemTxt = M.ChatItemLink(roll.itemID, roll.itemLink)
+  -- Cutoff tie FIRST: winners[] still holds the first cutoff name on
+  -- a tie (resolver shape), and nobody won — the tie re-roll owns
+  -- the window. Verdict names the tied (player links), never a winner.
+  if Z.Util.ArrayCount(res.tied) > 0 then
+    local t = {}
+    for i = 1, Z.Util.ArrayCount(res.tied) do table.insert(t, ChatName(res.tied[i].name)) end
+    return tostring(itemTxt) .. ": tie between " .. table.concat(t, ", ") .. " — re-roll."
+  end
   local winners = res.winners or {}
   if Z.Util.ArrayCount(winners) > 0 then
     local w = {}
@@ -794,11 +845,6 @@ function M.ResultLine(roll, res)
       table.insert(w, ChatName(winners[i].name) .. " (" .. tostring(winners[i].effective) .. ")")
     end
     return tostring(itemTxt) .. " won by " .. table.concat(w, ", ")
-  end
-  if Z.Util.ArrayCount(res.tied) > 0 then
-    local t = {}
-    for i = 1, Z.Util.ArrayCount(res.tied) do table.insert(t, ChatName(res.tied[i].name)) end
-    return tostring(itemTxt) .. ": tie between " .. table.concat(t, ", ") .. " — re-roll."
   end
   return tostring(itemTxt) .. ": no eligible rolls."
 end
@@ -848,14 +894,24 @@ function M.AnnounceResult(roll, res)
   -- Sim verdicts speak to the group even when the simmer isn't the ML
   -- (SaySim bypasses the speaker gate); live keeps the ML-only gate.
   M.AnnounceVerdict(line, roll and roll.mode == "SIM")
-  local winners = res.winners or {}
-  if Z.Util.ArrayCount(winners) > 0 then
+  -- Raider banner follows the SAME tie-first rule: a tie shows the
+  -- re-roll call, never a winner (winners[] is populated on ties).
+  if Z.Util.ArrayCount(res.tied or {}) > 0 then
+    if Z.RaiderLootUI and Z.RaiderLootUI.ShowResult then
+      local tw = {}
+      for i = 1, Z.Util.ArrayCount(res.tied) do
+        table.insert(tw, PName(res.tied[i].name))
+      end
+      Z.RaiderLootUI.ShowResult("Tie — " .. table.concat(tw, ", ") .. ": roll again!")
+    end
+  elseif Z.Util.ArrayCount(res.winners or {}) > 0 then
+    local winners = res.winners or {}
     if Z.RaiderLootUI and Z.RaiderLootUI.ShowResult then
       local bw = {}
       for i = 1, Z.Util.ArrayCount(winners) do table.insert(bw, PName(winners[i].name)) end
       Z.RaiderLootUI.ShowResult("The winner is " .. table.concat(bw, ", ") .. " !")
     end
-  elseif Z.Util.ArrayCount(res.tied) == 0 then
+  else
     if Z.RaiderLootUI and Z.RaiderLootUI.ShowResult then
       Z.RaiderLootUI.ShowResult("No winner this time.")
     end
@@ -1004,11 +1060,13 @@ function M.RollRange(base, rtype, eff)
 end
 
 -- Award data for the open window: winners, kind groups, per-type
--- contests, class-sorted candidates. Pure data (itemID in, table out) --
--- no sessions, no pending menus. The window owns it via DetailOnFinish.
+-- contests, tied re-roll list, class-sorted candidates. Pure data
+-- (itemID in, table out) -- no sessions, no pending menus. The window
+-- owns it via DetailOnFinish. tied names the cutoff-tie re-rollers
+-- (res.tied, may be 2+); empty when the finish decided cleanly.
 function M.AwardMenu(itemID, itemLink, res)
   local data = { winners = {}, groups = { SR = {}, MS = {}, OS = {}, TMOG = {} },
-    perType = {}, candidates = {}, res = res, none = false,
+    perType = {}, candidates = {}, tied = {}, res = res, none = false,
     itemID = itemID, itemLink = itemLink, sessionID = nil }
   local entries = res.entries or {}
   for i = 1, Z.Util.ArrayCount(entries) do
@@ -1028,6 +1086,13 @@ function M.AwardMenu(itemID, itemLink, res)
   end
   -- Per-type contests straight from the resolver (each kind by itself).
   data.perType = res.perType or {}
+  -- Cutoff tie: the top kind's entry + every tied name, in entry order.
+  -- The award window reads this (never the kind winner) to offer the
+  -- tie re-roll INSTEAD of any award button: tied names only roll again.
+  for i = 1, Z.Util.ArrayCount(res.tied or {}) do
+    local t = (res.tied or {})[i]
+    if t and t.name then table.insert(data.tied, t.name) end
+  end
   local winners = res.winners or {}
   for i = 1, Z.Util.ArrayCount(winners) do
     local w = winners[i]
@@ -1054,6 +1119,36 @@ end
 
 
 
+-- Cutoff tie names from an award menu (data.tied): the players who
+-- must roll again. Empty when the finish decided cleanly. Single
+-- helper so the window, the intake gate, and the chat line agree.
+-- (Eligibility is checked inline off roll.tied at intake time.)
+function M.TieNames(menu)
+  local out = {}
+  for i = 1, Z.Util.ArrayCount(menu and menu.tied) do
+    local nm = menu.tied[i]
+    if nm and nm ~= "" then table.insert(out, nm) end
+  end
+  return out
+end
+-- Tie re-roll chat line: who must roll again + the item link. Player
+-- links (click -> whisper) + item link, same builders as every other
+-- verdict line. Pure text (testable) + shared sender below.
+function M.TieRollLine(tied, itemID, itemLink)
+  local names = {}
+  for i = 1, Z.Util.ArrayCount(tied) do
+    if tied[i] and tied[i] ~= "" then table.insert(names, ChatName(tied[i])) end
+  end
+  return "Tie roll for " .. tostring(M.ChatItemLink(itemID, itemLink))
+    .. ": " .. table.concat(names, ", ") .. " — roll again!"
+end
+function M.AnnounceTieRoll(tied, itemID, itemLink, isSim)
+  local line = M.TieRollLine(tied, itemID, itemLink)
+  if Z.Comm and Z.Comm.SayGroup then Z.Comm.SayGroup(line)
+  elseif isSim and Z.Comm and Z.Comm.SaySim then Z.Comm.SaySim(line)
+  else Z.Print(line) end
+  return line
+end
 -- Display link for award UI: the readable name, never a bare item:id.
 -- Prefers the LootWindow row name (resolved at scan), else the [Name] in a
 -- full link, else the sheet name via GetItemInfo, else the link as-is.
@@ -1444,6 +1539,19 @@ function M.Award(itemID, winnerName, source, tradeTo)
   -- (old rows, headless, SIM): nothing to compare, never refuse.
   if source ~= "sim" and M.RefuseWhenFrozen(itemID) then
     return false
+  end
+  -- Tie guard: an unresolved cutoff tie has NO winner — every award
+  -- path refuses while the award window offers the tie re-roll. The
+  -- ML re-rolls the tied (button or finish), never awards through
+  -- the tie. Sim rows never tie-block (single-winner sim flow).
+  if source ~= "sim" then
+    local LW = Z.LootWindow
+    local d = LW and LW.detail or nil
+    if d and d.itemID == itemID and (d.phase or "pick") == "award"
+        and d.menu and Z.Util.ArrayCount(M.TieNames(d.menu)) > 0 then
+      Z.Print("Tie at top — tied players must roll again first.")
+      return false
+    end
   end
   M.EndRoll(itemID)
   -- Awarded = gone: no finished round left to continue on this item.

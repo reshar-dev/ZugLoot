@@ -289,7 +289,7 @@ local function barBox(b)
   return { x = last[4] or 0, y = last[5] or 0, w = b.w or 0 }
 end
 local vis = {}
-for _, n in ipairs({ "awardB", "tmogB", "contB", "rollB", "raidB", "sandB", "ignoreB", "moreB" }) do
+for _, n in ipairs({ "awardB", "tmogB", "tierollB", "contB", "rollB", "raidB", "sandB", "ignoreB", "moreB" }) do
   local btn = df[n]
   if btn and btn.hidden ~= true then
     local box = barBox(btn)
@@ -366,7 +366,7 @@ local listH = (df.rollsL and df.rollsL.h) or 0;
 local listBottom = 120 + listH;
 local frameH = df.h or 0;
 local barTop = nil;
-for _, n in ipairs({ "awardB", "tmogB", "contB", "rollB", "raidB", "sandB", "ignoreB", "moreB" }) do
+for _, n in ipairs({ "awardB", "tmogB", "tierollB", "contB", "rollB", "raidB", "sandB", "ignoreB", "moreB" }) do
   local btn = df[n];
   if btn and btn.hidden ~= true then
     local box = barBox(btn);

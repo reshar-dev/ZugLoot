@@ -440,7 +440,16 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
   (unlike **Roll again**, which starts fresh); newcomers roll in,
   re-rollers are allowance-capped. Awarding ends any open
   roll first, then hands out the item and closes the window; the row
-  leaves the list (done = gone). Ties stay open for a fresh re-roll round.
+  leaves the list (done = gone). A cutoff tie in the top kind offers
+  NO award button at all — the window shows **Tie roll (N)** for the
+  tied instead (any number of players): the tied roll again on a fresh
+  scoped round (old rolls dropped, non-tied /rolls parked at intake),
+  everyone else waits. Chat names who must roll again (player links)
+  + the item link at finish time. Awards through a tie are refused
+  everywhere (window, direct, TMOG row, `...` — the menu stays empty)
+  until the re-roll decides. **Continue rolling** reopens intake on a
+  decided round with the landed rolls kept (never on a tie — the tie
+  re-roll owns continuing); **Roll again** starts fresh.
   Cancel ends the roll and drops the window back to pick (re-roll /
   choose / close). (`HR` red for hard reserves, `SR` / `SR:n` orange for
   soft reserves). Nothing auto-starts — clicking a row opens the **row

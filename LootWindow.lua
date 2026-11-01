@@ -1334,15 +1334,30 @@ function M.DetailLines(d)
       end
     end
   elseif d.phase == "award" and d.menu then
-    -- Award window: winner rows first, then the ... choices.
-    local winners = d.menu.winners or {}
-    for i = 1, Z.Util.ArrayCount(winners) do
-      local w = winners[i]
-      table.insert(lines, "  winner: " .. PName(w.name)
-        .. " (" .. tostring(w.rollType) .. " " .. tostring(w.effective) .. ")")
+    -- Award window: winner rows first, then the ... choices — UNLESS
+    -- the top kind tied: then there is no winner, and the window
+    -- names the tie INSTEAD (tied names roll again, nobody awards).
+    local tiedAW = {}
+    if Z.MasterLootUI and Z.MasterLootUI.TieNames then
+      tiedAW = Z.MasterLootUI.TieNames(d.menu) or {}
     end
-    if Z.Util.ArrayCount(winners) == 0 then
-      table.insert(lines, "  (no eligible rolls — pick anyone or cancel)")
+    if Z.Util.ArrayCount(tiedAW) > 0 then
+      local tn = {}
+      for i = 1, Z.Util.ArrayCount(tiedAW) do
+        table.insert(tn, PName(tiedAW[i]))
+      end
+      table.insert(lines, "  tie: " .. table.concat(tn, ", ")
+        .. " — roll again (tied only)")
+    else
+      local winners = d.menu.winners or {}
+      for i = 1, Z.Util.ArrayCount(winners) do
+        local w = winners[i]
+        table.insert(lines, "  winner: " .. PName(w.name)
+          .. " (" .. tostring(w.rollType) .. " " .. tostring(w.effective) .. ")")
+      end
+      if Z.Util.ArrayCount(winners) == 0 then
+        table.insert(lines, "  (no eligible rolls — pick anyone or cancel)")
+      end
     end
   else
     if Z.Util.ArrayCount(d.rollers) > 0 then
@@ -1372,6 +1387,9 @@ end
 -- award:   Award <winner> per winner row, Continue rolling (reopen
 --          intake, landed rolls kept), Roll again (fresh), Raid roll,
 --          Ignore, ... (anyone else), Close.
+--          TIE: Tie roll (N) INSTEAD of every award row — the top kind
+--          tied, so there is no winner. Tied names only roll again;
+--          the intake parks everyone else.
 function M.DetailActions(d)
   d = d or M.detail
   local actions = {}
@@ -1386,6 +1404,21 @@ function M.DetailActions(d)
     return actions
   end
   if (d.phase or "pick") == "award" and d.menu then
+    -- Cutoff tie: NO award buttons at all — the top kind tied, so
+    -- there is no winner to hand to. The window offers the tie
+    -- re-roll (tied names only) instead; ... covers the roster as
+    -- usual. Resolve the tie first, then awards return.
+    local tied = {}
+    if MLUI and MLUI.TieNames then tied = MLUI.TieNames(d.menu) or {} end
+    if Z.Util.ArrayCount(tied) > 0 then
+      table.insert(actions, { id = "tieroll", label = "Tie roll ("
+        .. Z.Util.ArrayCount(tied) .. ")", tied = tied })
+      table.insert(actions, { id = "raidroll", label = "Raid roll" })
+      table.insert(actions, { id = "ignore", label = "Ignore" })
+      table.insert(actions, { id = "more", label = "..." })
+      table.insert(actions, { id = "close", label = "Close" })
+      return actions
+    end
     -- Every kind winner gets its own row: overall winner(s) first, then
     -- each contested kind not already listed. Continue rolling reopens
     -- intake with the landed rolls kept (Roll again starts fresh);
@@ -1577,8 +1610,14 @@ function M.doAction(itemID, actionID, extra)
     -- Continue rolling: reopen intake on the finished window, landed
     -- rolls kept (unlike "roll", which starts fresh). Refuses without
     -- the finish stamp (same item, award phase) or with a live roll.
+    -- Tie window: the tie re-roll owns continuing (stamp carries the
+    -- tie) — plain Continue stays manual-only, never a tie shortcut.
     if MLUI and MLUI.roll then return "roll failed" end
     if (d.phase or "pick") ~= "award" then return "roll failed" end
+    if MLUI and MLUI.TieNames
+        and Z.Util.ArrayCount(MLUI.TieNames(d.menu)) > 0 then
+      return "roll failed"
+    end
     local resumed = MLUI and MLUI.ContinueRoll
       and MLUI.ContinueRoll(d.itemID)
     if resumed then
@@ -1590,6 +1629,36 @@ function M.doAction(itemID, actionID, extra)
       d.status = "rolling"
       M.seedCountdown(d)
       M.SyncRoll(resumed, "continue")
+      M.RefreshDetail()
+      return "rolling"
+    end
+    return "roll failed"
+  end
+  if actionID == "tieroll" then
+    -- Tie re-roll: reopen intake SCOPED to the tied — the window flips
+    -- back to rolling with a FRESH list, and the intake parks every
+    -- non-tied /roll. Refuses without the tie on the menu (same item,
+    -- award phase) or with a live roll. The tie call already went to
+    -- chat at finish time; the button just opens the round.
+    if MLUI and MLUI.roll then return "roll failed" end
+    if (d.phase or "pick") ~= "award" or not d.menu then return "roll failed" end
+    local tied = (MLUI and MLUI.TieNames and MLUI.TieNames(d.menu)) or {}
+    if Z.Util.ArrayCount(tied) == 0 then return "roll failed" end
+    if d.itemID == nil then return "roll failed" end
+    local stamp = MLUI and MLUI.lastRound or nil
+    if not stamp or stamp.itemID ~= d.itemID then return "roll failed" end
+    stamp.tied = stamp.tied or tied
+    local resumed = MLUI and MLUI.ContinueRoll
+      and MLUI.ContinueRoll(d.itemID)
+    if resumed then
+      -- Fresh contest: the old landed list (tied AND untied) must not
+      -- shadow the re-roll — wipe the mirror, the live roll owns it.
+      d.menu = nil
+      d.phase = "rolling"
+      d.rolls = {}
+      d.status = "rolling"
+      M.seedCountdown(d)
+      M.SyncRoll(resumed, "tieroll")
       M.RefreshDetail()
       return "rolling"
     end
@@ -1895,6 +1964,16 @@ function M.BuildDetailFrame()
     if M.detail then M.ToggleMoreDropdown(moreB) end
   end)
   f.moreB = moreB
+  -- Tie roll: the tied re-roll on this window (fresh scoped round).
+  -- Built always (paint decides visibility): visible INSTEAD of every
+  -- award button while the top kind is tied — there is no winner.
+  local tierollB = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  tierollB:SetHeight(M.BTN_HEIGHT)
+  tierollB:SetText("Tie roll")
+  tierollB:SetScript("OnClick", function()
+    if M.detail then M.doAction(M.detail.itemID, "tieroll") end
+  end)
+  f.tierollB = tierollB
   -- X in the top-right corner: close the window (ends any open roll).
   local closeB = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   closeB:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
@@ -1927,6 +2006,18 @@ function M.PaintDetailFrame()
       local cd = d.countdown and (" (" .. tostring(d.countdown) .. "s)") or ""
       f.sub:SetText("Rolling..." .. cd .. " (" .. n .. " roll" .. (n == 1 and "" or "s") .. ")")
     elseif phase == "award" and d.menu then
+      local tiedSub = {}
+      if Z.MasterLootUI and Z.MasterLootUI.TieNames then
+        tiedSub = Z.MasterLootUI.TieNames(d.menu) or {}
+      end
+      if Z.Util.ArrayCount(tiedSub) > 0 then
+        -- Tie: no winner — name who rolls again instead.
+        local tn = {}
+        for i = 1, Z.Util.ArrayCount(tiedSub) do
+          table.insert(tn, PName(tiedSub[i]))
+        end
+        f.sub:SetText("Tie: " .. table.concat(tn, ", ") .. " — roll again")
+      else
       local winners = d.menu.winners or {}
       if Z.Util.ArrayCount(winners) > 0 then
         local w = {}
@@ -1937,6 +2028,7 @@ function M.PaintDetailFrame()
         f.sub:SetText("Winner: " .. table.concat(w, ", "))
       else
         f.sub:SetText("No eligible rolls — pick anyone (...)")
+      end
       end
     elseif Z.Util.ArrayCount(d.rollers) > 0 then
       local rn = {}
@@ -2014,13 +2106,28 @@ function M.PaintDetailFrame()
   end
   -- Award rows: primary = top winner, TMOG button = TMOG kind
   -- winner, Continue rolling + Roll/Raid roll = re-roll buttons,
-  -- Ignore = mark ignored, ... = everyone else.
+  -- Ignore = mark ignored, ... = everyone else. TIE: the tie re-roll
+  -- button INSTEAD of every award row — then Raid roll / Ignore / ....
   local function awardButtons()
     if not (d.menu and phase == "award") then
       return
     end
     local acts = M.DetailActions(d)
     local first = acts and acts[1]
+    if first and first.id == "tieroll" then
+      -- Cutoff tie: no winners, no kind rows, no Continue/Roll-again
+      -- (wrong contests) — the tie re-roll owns the bar. Raid roll
+      -- (numbers the raid instead) and Ignore stay; ... stays EMPTY
+      -- (MoreChoices offers nothing on a tie) but keeps its slot.
+      if f.tierollB then showBtn(f.tierollB, first.label) end
+      if f.awardB and f.awardB.Hide then f.awardB:Hide() end
+      if f.tmogB and f.tmogB.Hide then f.tmogB:Hide() end
+      if f.contB and f.contB.Hide then f.contB:Hide() end
+      if f.rollB and f.rollB.Hide then f.rollB:Hide() end
+      if f.raidB then showBtn(f.raidB, "Raid roll") end
+      if f.ignoreB then showBtn(f.ignoreB, "Ignore") end
+      return
+    end
     if first and first.id == "award-name" then
       showBtn(f.awardB, first.label)
     elseif f.awardB.Hide then
@@ -2058,8 +2165,9 @@ function M.PaintDetailFrame()
         f.awardB:Hide()
       end
       if f.tmogB and f.tmogB.Hide then f.tmogB:Hide() end
-      -- Continue rolling only lives on the award window: hidden on
-      -- pick/rolling.
+      -- Tie roll + Continue rolling only live on the award window:
+      -- hidden on pick/rolling.
+      if f.tierollB and f.tierollB.Hide then f.tierollB:Hide() end
       if f.contB and f.contB.Hide then f.contB:Hide() end
       -- Roll + Raid roll: their own buttons on pick (start) and
       -- mid-roll (raid-roll instead ends the open roll first).
@@ -2142,8 +2250,10 @@ M.moreDropdown = nil
 -- offers nothing (bar buttons own it), mid-roll the menu offers
 -- Raid-roll instead (ends the open roll, raid-rolls the item); the award
 -- window keeps Continue rolling (reopen, rolls kept), Roll again
--- (fresh) and Raid-roll instead next to the awards. Client menus never
--- show these (bar buttons own them). Returns {} in pick phase.
+-- (fresh) and Raid-roll instead next to the awards — EXCEPT on a
+-- cutoff tie, where the tie re-roll owns the bar: Tieroll first, then
+-- Raid-roll instead. Client menus never show these (bar buttons own
+-- them). Returns {} in pick phase.
 function M.MoreRollControls(d)
   d = d or M.detail
   local out = {}
@@ -2154,6 +2264,15 @@ function M.MoreRollControls(d)
     return out
   end
   if ph ~= "award" or not d.menu then return out end
+  if Z.MasterLootUI and Z.MasterLootUI.TieNames
+      and Z.Util.ArrayCount(Z.MasterLootUI.TieNames(d.menu)) > 0 then
+    -- Tie window: the re-roll owns continuing. Continue/Roll-again
+    -- would run the WRONG contest (kept landeds / fresh open roll) —
+    -- the tie round is the only way back to rolling.
+    table.insert(out, { id = "tieroll", label = "Tie roll" })
+    table.insert(out, { id = "raidroll", label = "Raid-roll instead" })
+    return out
+  end
   table.insert(out, { id = "continue", label = "Continue rolling" })
   table.insert(out, { id = "roll", label = "Roll again" })
   table.insert(out, { id = "raidroll", label = "Raid-roll instead" })
@@ -2188,7 +2307,15 @@ function M.MoreChoices(d)
     end
   end
   local inAward = (d.phase or "pick") == "award" and d.menu
-  if inAward then
+  -- Cutoff tie: the ... menu offers NOTHING awardable — awarding
+  -- anyone (winner, kind row, class group, /zl-style direct pick)
+  -- through a tie would hand out an undecided item. The tie re-roll
+  -- button owns the window; the ML resolves the tie first.
+  local tiedMenu = {}
+  if inAward and Z.MasterLootUI and Z.MasterLootUI.TieNames then
+    tiedMenu = Z.MasterLootUI.TieNames(d.menu) or {}
+  end
+  if Z.Util.ArrayCount(tiedMenu) == 0 and inAward then
     -- ... covers everyone the primary buttons do not: landed rollers
     -- first (labeled with their roll), then kind winners. The
     -- non-roller candidates (any raider, for when something is wrong
@@ -2208,7 +2335,7 @@ function M.MoreChoices(d)
         if row.tied[t] then addAward(row.tied[t].name) end
       end
     end
-  else
+  elseif not inAward then
     -- Pre-roll (pick, or rolling): reserves + landed rollers — nobody
     -- rolled on an award list yet, so labeled rollers dedupe the bare
     -- reserve names instead of duplicating them.
@@ -2217,6 +2344,9 @@ function M.MoreChoices(d)
       if d.rolls[i] then addAward(d.rolls[i].name) end
     end
   end
+  -- Tie window: skip the class-grouped roster too — the ... menu stays
+  -- EMPTY on a tie (tie re-roll button owns the window). No backdoor.
+  if Z.Util.ArrayCount(tiedMenu) > 0 then return out end
   -- Class-grouped roster: everyone awardable NOT already listed above
   -- (seen) — the full raid, not just reserves, so anyone can be
   -- rewarded directly before a roll. In-client each group opens a side

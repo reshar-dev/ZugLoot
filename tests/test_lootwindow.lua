@@ -673,4 +673,67 @@ ok(not stuck, "award view never shows waiting-for-rolls")
 ML.roll = nil
 LW.CloseDetail()
 
+-- 9. Cutoff tie: no award button — a Tie roll button for the tied instead.
+-- Highest-kind tie (2+ players, any size): awards refused everywhere,
+-- ... offers nothing, the tie call names the tied (player links) + the
+-- item link in chat, and the Tie roll button opens a scoped round that
+-- parks non-tied rolls and fresh-contests the tied.
+ZugLoot.DB = { sheet = makeSheet() }
+table.insert(ZugLoot.DB.sheet.items[1001].rollers, { name = "Solo", rolls = 1 })
+LW.SetItems({ { itemID = 1001, link = "item:1001", badge = "SR:3" } }, "loot")
+LW.OpenDetail(1001)
+eq(LW.doAction(1001, "roll"), "rolling", "tie setup roll starts")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)") -- 90+10 SR+ = 100
+ML.IntakeChatRoll("Bbb rolls 100 (1-100)") -- 100: tie at top
+ML.IntakeChatRoll("Solo rolls 40 (1-100)")
+printed = {}
+eq(LW.doAction(1001, "finish"), "tie", "tie finish reports tie")
+-- Chat: the tie call names the tied + the item link.
+local tieCall = false
+for i = 1, #printed do
+  if string.find(printed[i], "Tie roll for ", 1, true)
+      and string.find(printed[i], "|Hplayer:Aaa|h[Aaa]|h", 1, true)
+      and string.find(printed[i], "|Hplayer:Bbb|h[Bbb]|h", 1, true)
+      and string.find(printed[i], "|Hitem:1001", 1, true) then
+    tieCall = true break
+  end
+end
+ok(tieCall, "tie call names tied + item link")
+-- Window: no award buttons at all, Tie roll instead.
+local tacts = LW.DetailActions()
+eq(#tacts, 5, "tie window: tieroll + raidroll + ignore + ... + close")
+eq(tacts[1].id, "tieroll", "tie roll button first")
+ok(string.find(tacts[1].label, "(2)", 1, true) ~= nil, "tie button counts the tied")
+eq(tacts[2].id, "raidroll", "raid-roll kept on tie")
+eq(tacts[3].id, "ignore", "ignore kept on tie")
+eq(tacts[4].id, "more", "... kept on tie")
+eq(tacts[5].id, "close", "close kept on tie")
+local tlines = LW.DetailLines()
+local tieLine = false
+for i = 1, #tlines do
+  if string.find(tlines[i], "tie: Aaa, Bbb", 1, true) then tieLine = true break end
+end
+ok(tieLine, "award view names the tie, not a winner")
+-- Awards refused everywhere on a tie.
+eq(ML.Award(1001, "Aaa", "raid"), false, "direct award refused on tie")
+eq(LW.doAction(1001, "award-name", "Aaa"), "award failed", "window award refused on tie")
+ok(not SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "no won mark through a tie")
+-- ... offers nothing awardable on a tie.
+eq(#LW.MoreChoices(), 0, "... empty on tie")
+-- Tie roll button: scoped round, fresh list, tied-only intake.
+eq(LW.doAction(1001, "tieroll"), "rolling", "tie roll opens the round")
+ok(ML.roll ~= nil and ML.roll.itemID == 1001, "tie round live")
+eq(#LW.detail.rolls, 0, "tie round starts fresh — old landeds dropped")
+ML.IntakeChatRoll("Solo rolls 99 (1-100)") -- not tied: parked
+eq(#ML.roll.rolls, 0, "non-tied roll parked")
+ML.IntakeChatRoll("Aaa rolls 50 (1-100)")
+ML.IntakeChatRoll("Bbb rolls 61 (1-100)") -- 61 clears Aaa's 60
+eq(LW.doAction(1001, "finish"), "finished", "tie re-roll finishes clean")
+eq(LW.detail.menu.winners[1].name, "Bbb", "re-roll winner")
+local tacts2 = LW.DetailActions()
+eq(tacts2[1].id, "award-name", "awards back after the tie resolves")
+eq(tacts2[1].name, "Bbb", "winner awardable")
+eq(LW.doAction(1001, "award-name", "Bbb"), "awarded Bbb", "re-roll winner awards")
+ok(SRData.HasWon(ZugLoot.DB.sheet, 1001, "Bbb"), "re-roll won-marks")
+
 return T
