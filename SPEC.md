@@ -633,7 +633,20 @@ missing-DLL warning, status line shows it).
 - ZugLoot-aware deferral: a corpse ZugLoot's own window already shows
   (`MasterLootUI.lootOpen`) counts as a manual window — the walk never
   fires into a corpse the player is working. Closing it re-services
-  the queue.
+  the queue. The chain's OWN window is exempt (pinned guid == live
+  `lootKey`), so chaining to the next mob never reads its own window
+  as foreign.
+- Threshold chain (master-loot auto loot): `LootAllCorpses` can only
+  take what the threshold lets it, and ClassicAPI only opens a window
+  for a corpse it actually auto-looted — an all-threshold+ mob leaves
+  NO window at all. After each walk, every touched guid queues and
+  opens in scan order via `C_Loot.LootUnit(guid)` so the ML can roll
+  each corpse; finishing a corpse (empty or ignored-only close-out)
+  advances to the next, walk-aways keep their corpse, and ignored
+  guids (existing `Ignore` + new `thresholdSkipped` list) never
+  re-open. Handled corpses (live `lootKey` + parked `corpseCache` —
+  the same cache that answers "already rolled") never re-queue.
+  LootUnit-absent DLLs drain the chain; `ResetRuntime` drops it.
 - Pure gates + injectable state are headless-testable (`M state`,
   stubbed `C_Loot`, `ZugLoot.Timer` driving); the client frame
   (event registrations, speed-movement poll) only builds in-game.

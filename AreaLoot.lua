@@ -49,6 +49,10 @@ local function freshState()
     lootWalkActive = false,
     lootWalkStartedAt = nil,
     lootWalkSource = nil,
+    thresholdQueue = {},
+    thresholdActive = nil,
+    thresholdOpenedAt = nil,
+    thresholdSkipped = {},
     emptyScanStreak = 0,
     useSpeedMovement = false,
     movementStateKnown = false,
@@ -165,6 +169,10 @@ function M.ResetRuntime()
   st.lootWalkActive = false
   st.lootWalkStartedAt = nil
   st.lootWalkSource = nil
+  st.thresholdQueue = {}
+  st.thresholdActive = nil
+  st.thresholdOpenedAt = nil
+  st.thresholdSkipped = {}
   st.emptyScanStreak = 0
   st.stopGraceTimer = nil
   st.lastStopLootRequestAt = nil
@@ -352,11 +360,55 @@ end
 
 -- A ZugLoot-handled corpse window counts as a manual window: the walk
 -- must never fire into a corpse the player is already working.
+-- Exception: the threshold walk we opened ourselves (thresholdActive +
+-- still-open corpse) is ours to keep driving — chaining to the NEXT mob
+-- must not read our own follow-up window as a foreign manual window.
 function M.ManualLootOpen()
   if M.state.manualLootOpen then return true end
   if M.state.lootWalkActive then return false end
+  if M.state.thresholdActive then
+    -- Ours only while the chained corpse is still open AND showing the
+    -- same corpse (re-loots restore lootKey via the corpse cache, so a
+    -- nil/changed key means the player moved on — treat as manual).
+    -- lootKey form is "guid:<guid>" (CorpseKey); compare both shapes.
+    local MLUI = Z.MasterLootUI
+    if MLUI and MLUI.lootOpen and MLUI.lootKey
+        and (MLUI.lootKey == M.state.thresholdActive
+          or MLUI.lootKey == ("guid:" .. M.state.thresholdActive)) then
+      return false
+    end
+  end
   return Z.MasterLootUI and Z.MasterLootUI.lootOpen and true or false
 end
+
+-- -- Threshold-leftovers follow-up chain ---------------------------------
+-- Master-loot threshold rule (stock client behavior): LootAllCorpses can
+-- only auto-take what the threshold lets it. Anything at/above
+-- GetLootThreshold stays on the corpse — and ClassicAPI only OPENS a
+-- window for a corpse it actually auto-looted. So after a walk, a mob
+-- whose loot is ALL above threshold leaves NO window at all: without a
+-- follow-up, that corpse is never shown and its roll never starts.
+--
+-- Fix: when a walk finishes and the scan says some corpse still holds
+-- threshold+ loot, open THAT corpse directly via C_Loot.LootUnit(guid)
+-- so MasterLootUI sees LOOT_OPENED and the ML can roll it. Then chain:
+-- after the ML finishes the corpse (LOOT_CLOSED with no rows left, or
+-- an ignored-only CloseIfFinished), open the NEXT queued guid — until
+-- the queue drains or something the player ignores parks it.
+-- (Ignored = parked: a guid the player explicitly ignored NEVER
+-- re-opens, this walk or any later one. Same for the corpse the
+-- player already has open — ManualLootOpen never fires into it.)
+--
+-- Queue entries: { guid } in scan order. guid is the ONLY identity the
+-- opener uses (C_Loot.LootUnit takes the guid) — MasterLootUI's
+-- corpseCache key (guid:/fp: names) is the ignore/skip side, keyed by
+-- corpse key because THAT cache already remembers every rolled corpse
+-- by key, so "same corpse already handled" checks read one place.
+-- Runtime only, dropped by ResetRuntime like every other walk field.
+
+-- Forward declaration: the chain body (queue predicate) lives AFTER the
+-- scheduling section (OpenNext/OnClosed call locals defined there).
+local ChainCollect = nil
 
 local function GetPlayerLootRestriction()
   if M.state.playerControlLost then return "player control is lost" end
@@ -481,18 +533,67 @@ function M.CompleteActiveLootWalk()
   else
     DebugLog("GetLastScanResults is unavailable")
   end
-  if Z.Util.ArrayCount(results) > 0 and type(GetTime) == "function" then
-    local settleDuration, latency = GetAdaptiveLootSettleDuration()
-    st.settleUntil = GetTime() + settleDuration
-    DebugLog("Non-empty scan: latency=" .. tostring(latency or "unknown")
-      .. " scanTime=" .. string.format("%.3f", scanDuration or 0)
-      .. "s settling=" .. string.format("%.3f", settleDuration)
-      .. " seconds")
-    if st.pendingLootReason == "retry" then
-      st.pendingLootReason = nil
-      DebugLog("Discarded redundant stop/combat follow-up after successful scan")
+  -- Headless note: tests stub GetLastScanResults + GetTime, but a lean
+  -- harness may stub results without a clock. The threshold chain only
+  -- needs the guids, never the settle math — queue whenever results
+  -- exist, settle only when the clock does.
+  if Z.Util.ArrayCount(results) > 0 then
+    if type(GetTime) == "function" then
+      local settleDuration, latency = GetAdaptiveLootSettleDuration()
+      st.settleUntil = GetTime() + settleDuration
+      DebugLog("Non-empty scan: latency=" .. tostring(latency or "unknown")
+        .. " scanTime=" .. string.format("%.3f", scanDuration or 0)
+        .. "s settling=" .. string.format("%.3f", settleDuration)
+        .. " seconds")
+      if st.pendingLootReason == "retry" then
+        st.pendingLootReason = nil
+        DebugLog("Discarded redundant stop/combat follow-up after successful scan")
+      end
     end
     st.emptyScanStreak = 0
+    -- Threshold leftovers: the walk auto-takes what the threshold
+    -- lets it; every corpse it touched still needs its own window for
+    -- the ML to roll the threshold+ items. Queue their guids; the
+    -- chain opens each via C_Loot.LootUnit and walks the queue as the
+    -- ML finishes corpses. Ignored guids + corpses the window already
+    -- holds (live key + parked cache) never re-queue.
+    -- Handled set: current corpse keys. Prefer MasterLootUI's OWN
+    -- live key + cache (authoritative: the rows the window really
+    -- holds), so the chain can never double-open a corpse the ML is
+    -- working. The scan's guid doubles as the window pin
+    -- (LootUnit(guid) opens by guid; the opened corpse pins lootGUID
+    -- + lootKey "guid:<guid>" in OnLootOpened).
+    local MLUI = Z.MasterLootUI
+    local handledLive = nil
+    if MLUI then
+      handledLive = {}
+      -- Live corpse first: OnLootOpened pins lootKey for the corpse
+      -- the window is CURRENTLY showing; cache second (parked rows).
+      if MLUI.lootKey then handledLive[MLUI.lootKey] = true end
+      if MLUI.corpseCache then
+        for key in pairs(MLUI.corpseCache) do handledLive[key] = true end
+      end
+    end
+    local queued = M.CollectThresholdQueue(results, st.thresholdSkipped,
+      handledLive)
+    if Z.Util.ArrayCount(queued) > 0 then
+      st.thresholdQueue = st.thresholdQueue or {}
+      for i = 1, Z.Util.ArrayCount(queued) do
+        local g = queued[i] and queued[i].guid or nil
+        if g and not M.IsGuidQueued(st.thresholdQueue, g) then
+          table.insert(st.thresholdQueue, queued[i])
+        end
+      end
+      DebugLog("Threshold chain queued "
+        .. Z.Util.ArrayCount(queued) .. " corpse(s)")
+      -- A window the walk itself opened owns the chain start: the
+      -- engine releases it below (autoLootWindowOpen) and its
+      -- LOOT_CLOSED kicks the first LootUnit open via
+      -- OnThresholdWindowClosed. No walk-owned window: open now.
+      if not st.autoLootWindowOpen then
+        M.OpenNextThreshold()
+      end
+    end
   else
     -- Empty scan after a real trigger: the corpses were probably not
     -- loot-flagged yet (or the player edged out of range). One short
@@ -837,6 +938,181 @@ local function RecoverTimedOutLootWalk()
   M.ServicePendingLootRequest()
 end
 
+-- -- Threshold-leftovers follow-up chain body ------------------------------
+-- (Declared here: OpenNextThreshold + OnThresholdWindowClosed call
+-- IsLootScanInProgress / GetPlayerLootRestriction / ManualLootOpen,
+-- defined above in trigger-input + scheduling order. Lua locals are
+-- only visible after declaration.)
+local function CollectThresholdQueue(results, skip, handledKeys)
+  local out = {}
+  local seen = {}
+  local active = M.state.thresholdActive
+  for i = 1, Z.Util.ArrayCount(results or {}) do
+    local c = (results or {})[i]
+    local guid = c and c.guid or nil
+    if type(guid) == "string" and guid ~= "" and not seen[guid]
+        and guid ~= active
+        and not (skip and skip[guid])
+        and not (handledKeys and handledKeys["guid:" .. guid]) then
+      seen[guid] = true
+      table.insert(out, { guid = guid })
+    end
+  end
+  return out
+end
+ChainCollect = CollectThresholdQueue
+function M.CollectThresholdQueue(results, skip, handledKeys)
+  return CollectThresholdQueue(results, skip, handledKeys)
+end
+-- Chain entry used above its definition (walk completion runs before
+-- this section loads): route through the public method, never the
+-- local. Direct-local calls from ABOVE this line would nil-error.
+-- (M.CollectThresholdQueue is assigned here, so any call after load
+-- is safe regardless of source order.)
+
+-- Corpse already handled via our window: parked in the MasterLootUI
+-- corpse cache (ParkCorpse snapshots rows keyed by corpse key;
+-- ForgetCorpse drops distributed ones). Pure helper over an injectable
+-- cache table (headless-testable).
+function M.IsCorpseHandled(cache, key)
+  if not key or type(cache) ~= "table" then return false end
+  return cache[key] ~= nil
+end
+
+-- Guid already queued for the follow-up chain (pure, headless-testable).
+function M.IsGuidQueued(queue, guid)
+  for i = 1, Z.Util.ArrayCount(queue or {}) do
+    if (queue or {})[i] and (queue[i].guid or queue[i]) == guid then
+      return true
+    end
+  end
+  return false
+end
+
+-- Opener probe (pure, no warning): C_Loot.LootUnit(guid) opens one
+-- corpse by guid. Absent (older DLL) = chain inert, queue drains.
+function M.CanLootUnit()
+  return C_Loot ~= nil and type(C_Loot.LootUnit) == "function"
+end
+
+-- Open one corpse of the threshold chain. Returns true when the open
+-- call ISSUED (LOOT_OPENED will follow and MasterLootUI takes over).
+-- False drains nothing: the guid stays queued for the next trigger —
+-- EXCEPT refused guids (no API, manual window on a FOREIGN corpse,
+-- player busy), which mark skip so the chain advances past them
+-- instead of wedging on one unopenable mob.
+function M.OpenNextThreshold()
+  local st = M.state
+  if not M.IsOn() then return false end
+  if st.lootWalkActive or IsLootScanInProgress() then
+    DebugLog("Threshold chain deferred: scan still active")
+    return false
+  end
+  if not M.CanLootUnit() then
+    DebugLog("Threshold chain inert: C_Loot.LootUnit unavailable")
+    st.thresholdQueue = {}
+    return false
+  end
+  -- Never fire into a corpse the player is working (foreign manual
+  -- window). Our OWN chained window is exempt (see ManualLootOpen).
+  if M.ManualLootOpen() then
+    DebugLog("Threshold chain deferred: manual loot window is open")
+    return false
+  end
+  local restriction = GetPlayerLootRestriction()
+  if restriction then
+    DebugLog("Threshold chain deferred: " .. restriction)
+    return false
+  end
+  -- No movement gate: LootUnit opens a corpse window (no walk, no
+  -- travel) — the walk's own movement deferral already decided the
+  -- corpses are in range. In-combat, on-the-move, and out-of-combat
+  -- opens all behave the same.
+  if Z.Util.ArrayCount(st.thresholdQueue or {}) == 0 then return false end
+  local entry = st.thresholdQueue[1]
+  local guid = entry and (entry.guid or entry) or nil
+  if type(guid) ~= "string" or guid == "" then
+    table.remove(st.thresholdQueue, 1)
+    DebugLog("Threshold chain dropped an empty entry")
+    return M.OpenNextThreshold()
+  end
+  -- Already handled (window cache or live rows): drop without opening.
+  local MLUI = Z.MasterLootUI
+  if MLUI then
+    if MLUI.corpseCache
+        and M.IsCorpseHandled(MLUI.corpseCache, "guid:" .. guid) then
+      table.remove(st.thresholdQueue, 1)
+      DebugLog("Threshold chain skipped an already-handled corpse")
+      return M.OpenNextThreshold()
+    end
+    if MLUI.lootKey == ("guid:" .. guid) then
+      table.remove(st.thresholdQueue, 1)
+      DebugLog("Threshold chain skipped the live corpse")
+      return M.OpenNextThreshold()
+    end
+  end
+  DebugLog("Opening threshold corpse " .. tostring(guid))
+  local callOK, callResult = pcall(C_Loot.LootUnit, guid)
+  if callOK and callResult then
+    table.remove(st.thresholdQueue, 1)
+    st.thresholdActive = guid
+    if type(GetTime) == "function" then st.thresholdOpenedAt = GetTime() end
+    return true
+  end
+  DebugLog("LootUnit refused " .. tostring(guid) .. ": parking it")
+  st.thresholdSkipped = st.thresholdSkipped or {}
+  st.thresholdSkipped[guid] = true
+  table.remove(st.thresholdQueue, 1)
+  return false
+end
+
+-- The chained corpse closed: advance. Finished (no rows left) or
+-- ignored-only (CloseIfFinished closed it out) both count as done —
+-- EITHER way the ML is through with this mob, so open the next.
+-- A corpse that still holds ACTIONABLE rows when its window closes is
+-- a walk-away, not a finish: keep it active so re-looting resumes it
+-- instead of opening the next mob over it.
+function M.OnThresholdWindowClosed()
+  local st = M.state
+  local guid = st.thresholdActive
+  if not guid then
+    -- No active chain: a queued backlog (deferred while busy) gets
+    -- its chance now that a window closed.
+    M.OpenNextThreshold()
+    return
+  end
+  local LW = Z.LootWindow
+  if LW and LW.LootingFinished and not LW.LootingFinished() then
+    DebugLog("Threshold corpse walked away with rows left; keeping it active")
+    return
+  end
+  DebugLog("Threshold corpse finished; chaining to the next")
+  st.thresholdActive = nil
+  st.thresholdOpenedAt = nil
+  M.OpenNextThreshold()
+end
+
+-- Mark a chained corpse ignored: the player explicitly parked it —
+-- never re-open this walk (or any later one). Advances past it.
+-- Nil guid (unresolvable corpse identity) clears NOTHING: an ignore
+-- must never drop the active chain on a failed identity read.
+-- Non-active guids only park + dequeue (the walk-away case: a corpse
+-- queued but ignored from a manual window before its LootUnit fired).
+function M.IgnoreThresholdCorpse(guid)
+  local st = M.state
+  if not guid then return end
+  st.thresholdSkipped = st.thresholdSkipped or {}
+  st.thresholdSkipped[guid] = true
+  if st.thresholdActive and st.thresholdActive == guid then
+    st.thresholdActive = nil
+    st.thresholdOpenedAt = nil
+  end
+  for i = Z.Util.ArrayCount(st.thresholdQueue or {}), 1, -1 do
+    local e = st.thresholdQueue[i]
+    if e and (e.guid or e) == guid then table.remove(st.thresholdQueue, i) end
+  end
+end
+
 -- -- Trigger entries ------------------------------------------------------
 -- NPC death: the fastest pass (corpses loot-flag a beat after UNIT_DIED).
 function M.OnDeath(guid)
@@ -1066,6 +1342,7 @@ function M.OnEvent(event, a1)
     st.manualLootOpen = false
     st.autoLootWindowOpen = false
     DebugLog("Loot window marked closed")
+    M.OnThresholdWindowClosed()
     M.ServicePendingLootRequest()
     return
   end

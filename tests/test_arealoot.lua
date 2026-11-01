@@ -153,10 +153,132 @@ ok(string.find(AL.StatusText(), "ON", 1, true) ~= nil, "status shows ON")
 AL.SetEnabled(false)
 ok(string.find(AL.StatusText(), "OFF", 1, true) ~= nil, "status shows OFF")
 
+-- 10. Threshold chain: above-threshold corpses get their own window.
+-- Master loot leaves threshold+ items on the corpse, so a walk that
+-- touched a corpse but took nothing leaves no window at all — the
+-- chain re-opens each touched guid via C_Loot.LootUnit and walks the
+-- queue as corpses finish. Ignored guids never re-open (existing
+-- corpse-cache + ignore list answer "already handled").
+AL.Shutdown()
+ZugLoot.DB.areaLoot = { enabled = true, lootOnDeath = true,
+  lootOnStop = true, lootInCombat = true }
+AL.state.initialized = true
+ZugLoot.MasterLootUI = nil
+ZugLoot.LootWindow = nil
+local opened = {}
+C_Loot = {
+  LootAllCorpses = function() return true end,
+  IsScanInProgress = function() return false end,
+  LootUnit = function(guid) table.insert(opened, guid) return true end,
+  GetLastScanResults = function()
+    return { { guid = "guid-A", items = {} }, { guid = "guid-B", items = {} } }
+  end,
+}
+GetTime = function() return 100 end
+-- No DLL opener: chain inert, queue drains.
+C_Loot.LootUnit = nil
+ok(not AL.CanLootUnit(), "no LootUnit: probe false")
+eq(AL.OpenNextThreshold(), false, "no LootUnit: nothing opens")
+C_Loot.LootUnit = function(guid) table.insert(opened, guid) return true end
+ok(AL.CanLootUnit(), "LootUnit present: probe true")
+-- Pure queue collection: dedupe + skip ignored + skip active.
+AL.state.thresholdActive = "guid-B"
+local q = AL.CollectThresholdQueue(
+  { { guid = "guid-A" }, { guid = "guid-A" }, { guid = nil },
+    { guid = "guid-B" }, { guid = "" } },
+  { ["guid-C"] = true })
+eq(#q, 1, "one queued guid after dedupe/skip/active")
+eq(q[1].guid, "guid-A", "scan order kept")
+AL.state.thresholdActive = nil
+-- Walk completion queues touched corpses when the engine area-loots
+-- them (LootUnit unavailable there) and opens the first directly
+-- (no walk-owned window open).
+opened = {}
+AL.state.thresholdQueue = {}
+AL.state.thresholdSkipped = {}
+AL.state.lootWalkActive = true
+AL.state.lootWalkSource = "death"
+alias = AL.state
+AL.CompleteActiveLootWalk()
+ok(not alias.lootWalkActive, "threshold walk completed")
+eq(#alias.thresholdQueue, 1, "second corpse stays queued")
+eq(opened[1], "guid-A", "first touched corpse opened via LootUnit")
+eq(alias.thresholdActive, "guid-A", "active guid pinned")
+-- Finishing the corpse (no rows left) chains to the next mob.
+ZugLoot.LootWindow = { LootingFinished = function() return true end }
+AL.OnEvent("LOOT_CLOSED")
+eq(opened[2], "guid-B", "next corpse opens after finish")
+eq(alias.thresholdActive, "guid-B", "active advances")
+-- Walk-away with rows left: keep the corpse, don't advance.
+ZugLoot.LootWindow = { LootingFinished = function() return false end }
+opened = {}
+AL.OnEvent("LOOT_CLOSED")
+eq(#opened, 0, "walk-away opens nothing")
+eq(alias.thresholdActive, "guid-B", "walk-away keeps the corpse active")
+-- Ignoring parks the guid: never re-opens, queue advances past it.
+ZugLoot.LootWindow = { LootingFinished = function() return true end }
+AL.IgnoreThresholdCorpse("guid-B")
+eq(alias.thresholdActive, nil, "ignore clears the active corpse")
+eq(alias.thresholdSkipped["guid-B"], true, "ignore parks the guid")
+-- Re-scan touching the ignored guid never re-queues it.
+local q2 = AL.CollectThresholdQueue({ { guid = "guid-B" } },
+  alias.thresholdSkipped)
+eq(#q2, 0, "ignored guid never re-queues")
+-- Already-handled corpse-cache keys never queue (IsCorpseHandled +
+-- live lootKey both read the SAME cache MasterLoot uses to remember
+-- rolls: guid: keys for GUID corpses, lootKey for the live corpse).
+ok(AL.IsCorpseHandled({ ["guid:g-A"] = {} }, "guid:g-A"),
+  "parked cache key reads handled")
+ok(not AL.IsCorpseHandled({}, "guid:g-A"), "absent key reads fresh")
+ok(not AL.IsCorpseHandled(nil, "guid:g-A"), "nil cache reads fresh")
+ZugLoot.MasterLootUI = { lootOpen = true, lootKey = "guid:g-A",
+  corpseCache = { ["guid:g-A"] = {} } }
+local q3 = AL.CollectThresholdQueue({ { guid = "g-A" } }, {},
+  { ["guid:g-A"] = true })
+eq(#q3, 0, "cached corpse never re-queues")
+-- Own chained window is not a manual window (chain keeps driving),
+-- a foreign window still blocks.
+AL.state.thresholdActive = "guid-X"
+ZugLoot.MasterLootUI = { lootOpen = true, lootKey = "guid:guid-X" }
+ok(not AL.ManualLootOpen(), "own chained window never blocks")
+-- Raw-guid lootKey (older cache shape) also matches.
+ZugLoot.MasterLootUI = { lootOpen = true, lootKey = "guid-X" }
+ok(not AL.ManualLootOpen(), "own raw-guid key never blocks")
+ZugLoot.MasterLootUI = { lootOpen = true, lootKey = "guid-other" }
+ok(AL.ManualLootOpen(), "foreign window still blocks")
+ZugLoot.MasterLootUI = nil
+AL.state.thresholdActive = nil
+-- Ignore guards: nil clears nothing; a mismatched pin parks but
+-- keeps the active chain; a queued-but-never-opened guid parks +
+-- dequeues (walk-away ignored from a manual window).
+AL.state.thresholdActive = "guid-K"
+AL.state.thresholdQueue = { { guid = "guid-K" } }
+AL.state.thresholdSkipped = {}
+AL.IgnoreThresholdCorpse(nil)
+eq(AL.state.thresholdActive, "guid-K", "nil ignore keeps the active chain")
+eq(#AL.state.thresholdQueue, 1, "nil ignore dequeues nothing")
+AL.IgnoreThresholdCorpse("guid-other")
+eq(AL.state.thresholdActive, "guid-K", "mismatched pin keeps the chain")
+ok(AL.state.thresholdSkipped["guid-other"], "mismatched guid still parked")
+AL.state.thresholdActive = nil
+AL.state.thresholdQueue = { { guid = "guid-Q" } }
+AL.IgnoreThresholdCorpse("guid-Q")
+eq(#AL.state.thresholdQueue, 0, "queued guid dequeued on ignore")
+ok(AL.state.thresholdSkipped["guid-Q"], "queued guid parked")
+ZugLoot.MasterLootUI = nil
+-- ResetRuntime drops the chain like every other walk field.
+AL.state.thresholdQueue = { { guid = "g" } }
+AL.state.thresholdSkipped = { g = true }
+AL.Shutdown()
+eq(#AL.state.thresholdQueue, 0, "shutdown drops the threshold queue")
+eq(AL.state.thresholdActive, nil, "shutdown drops the active corpse")
+eq(AL.state.thresholdSkipped.g, nil, "shutdown drops the ignore list")
+
 C_Loot = nil
 GetTime = nil
 GetUnitSpeed = nil
 ZugLoot.MasterLootUI = nil
+ZugLoot.LootWindow = nil
 ZugLoot.Timer.CancelAll()
 
 if T.fail == 0 then

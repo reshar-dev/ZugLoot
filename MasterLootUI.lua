@@ -1964,6 +1964,19 @@ function M.Ignore(itemID, source)
     Z.LootWindow.CloseIfFinished(true)
   end
   M.MaybeGroupAfterBoss(source)
+  -- Threshold chain: an ignored corpse is parked, never re-opened.
+  -- Only the ACTIVE chained guid parks: lootGUID pins the corpse that
+  -- LootUnit opened (survives re-targeting). Mismatched pins (stale
+  -- guid, fp: fallback corpses that never came from the chain) must
+  -- NOT clear the active chain — IgnoreThresholdCorpse only clears on
+  -- an exact match, and only parks a real guid.
+  if Z.AreaLoot and Z.AreaLoot.IgnoreThresholdCorpse and source ~= "sim" then
+    if M.lootGUID
+        and Z.AreaLoot.state
+        and Z.AreaLoot.state.thresholdActive == M.lootGUID then
+      Z.AreaLoot.IgnoreThresholdCorpse(M.lootGUID)
+    end
+  end
   -- Queue bookkeeping: an ignored sim row must not stay rollable,
   -- so its queue entry drops (the row itself stays listed, ignored).
   if Z.Sim then
