@@ -26,6 +26,9 @@ local allowedGlobals = {
   -- Addon namespace
   ["ZugLoot"] = true, ["SlashCmdList"] = true, ["SLASH_ZUGLOOT1"] = true,
   ["SLASH_ZUGLOOT2"] = true, ["SLASH_ZUGLOOT3"] = true,
+  -- ClassicAPI DLL table (probed, never required). ZugLoot touches
+  -- C_Loot only; Nampower/Turtle provide the cast/speed/position APIs.
+  ["C_Loot"] = true,
   -- Blizzard frames and globals
   ["UIParent"] = true, ["GameTooltip"] = true, ["DEFAULT_CHAT_FRAME"] = true,
   ["ChatFrameEditBox"] = true, ["StaticPopupDialogs"] = true, ["StaticPopup_Show"] = true,
@@ -83,7 +86,7 @@ local shippedFiles = {
   "Resolver.lua", "ItemCards.lua", "ItemIcon.lua", "SRView.lua", "SRSecurity.lua",
   "SRImport.lua", "Pysanka.lua", "MainWindow.lua", "Sim.lua", "MasterLootUI.lua",
   "RaidArchive.lua", "Comm.lua", "Core.lua", "LootWindow.lua", "AtlasLoot.lua",
-  "RaiderLootUI.lua", "DropLog.lua", "VersionGrid.lua", "Minimap.lua"
+  "RaiderLootUI.lua", "DropLog.lua", "VersionGrid.lua", "Minimap.lua", "AreaLoot.lua"
 }
 
 for _, f in ipairs(shippedFiles) do

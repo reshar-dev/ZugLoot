@@ -1905,9 +1905,87 @@ function M.RenderSetup()
     table.insert(panels, { title = "Automation", panel = panel, top = ry })
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
-  -- Section 4: Danger zone — factory reset. Left column, under
-  -- Looting: left runs Looting + Danger (~290), right runs Rolling +
-  -- Automation (~298) — bottoms 8px apart, no dead space, no footer.
+  -- Section 4: Area loot — event-driven nearby-corpse looting,
+  -- imported from ../AutoAreaLoot. Right column, under Automation.
+  -- ClassicAPI DLL required: without C_Loot.LootAllCorpses the toggles
+  -- persist but nothing ever scans (one-time warning, status line).
+  -- Left runs Looting + Danger zone, right runs Rolling + Automation +
+  -- Area loot; the pair wraps at the deeper column as before.
+  do
+    local AL = Z.AreaLoot
+    local contentH = BH + 8 + BH + 8 + BH + 8 + 21
+    local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
+    local head = FS(panel, "GameFontNormal", "Area loot")
+    head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
+    if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
+    local function alLabel()
+      if AL and AL.IsOn and AL.IsOn() then return "Area loot: ON" end
+      return "Area loot: OFF"
+    end
+    local bAL = duoButton(panel, 0, -PAD_TOP)
+    bAL:SetText(alLabel())
+    bAL:SetScript("OnClick", function()
+      if AL and AL.SetEnabled then AL.SetEnabled(not (AL.IsOn and AL.IsOn())) end
+      bAL:SetText(alLabel())
+      M.Refresh()
+    end)
+    Tip(bAL, "Area loot", "Automatically loot nearby corpses when it is safe to do so.",
+      "Requires the ClassicAPI DLL (C_Loot.LootAllCorpses) — without it, inert.")
+    local function deathLabel()
+      if AL and AL.DeathOn and AL.DeathOn() then return "On death: ON" end
+      return "On death: OFF"
+    end
+    local bDeath = duoButton(panel, 1, -PAD_TOP)
+    bDeath:SetText(deathLabel())
+    bDeath:SetScript("OnClick", function()
+      if AL and AL.SetDeath then AL.SetDeath(not (AL.DeathOn and AL.DeathOn())) end
+      bDeath:SetText(deathLabel())
+      M.Refresh()
+    end)
+    Tip(bDeath, "Loot on death", "Loot nearby corpses when an NPC death event fires.",
+      "Deaths clearly beyond loot range are ignored.")
+    local function stopLabel()
+      if AL and AL.StopOn and AL.StopOn() then return "On stop: ON" end
+      return "On stop: OFF"
+    end
+    local bStop = duoButton(panel, 0, -PAD_TOP - BH - 8)
+    bStop:SetText(stopLabel())
+    bStop:SetScript("OnClick", function()
+      if AL and AL.SetStop then AL.SetStop(not (AL.StopOn and AL.StopOn())) end
+      bStop:SetText(stopLabel())
+      M.Refresh()
+    end)
+    Tip(bStop, "Loot on movement stop", "Loot when movement stops (waits 0.15s, cancels if you move).",
+      "Same-area stops coalesce; moving 5+ yards re-arms an immediate scan.")
+    local function combatLabel()
+      if AL and AL.CombatOn and AL.CombatOn() then return "In combat: ON" end
+      return "In combat: OFF"
+    end
+    local bCombat = duoButton(panel, 1, -PAD_TOP - BH - 8)
+    bCombat:SetText(combatLabel())
+    bCombat:SetScript("OnClick", function()
+      if AL and AL.SetCombat then AL.SetCombat(not (AL.CombatOn and AL.CombatOn())) end
+      bCombat:SetText(combatLabel())
+      M.Refresh()
+    end)
+    Tip(bCombat, "Battle looting", "Loot while fighting and on the move; casts and manual windows still block.",
+      "One final pass runs after combat when a combat-time trigger occurred.")
+    local info = FS(panel, "GameFontHighlightSmall",
+      (AL and AL.StatusText and AL.StatusText()) or "ClassicAPI missing — area looting disabled")
+    info:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP - BH - 8 - BH - 8)
+    info:SetWidth(colW - PAD_SIDE * 2) info:SetJustifyH("LEFT")
+    M.setupBtns = M.setupBtns or {}
+    M.setupBtns.areaLoot = bAL
+    M.setupBtns.areaLootDeath = bDeath
+    M.setupBtns.areaLootStop = bStop
+    M.setupBtns.areaLootCombat = bCombat
+    table.insert(panels, { title = "Area loot", panel = panel, top = ry })
+    ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+  end
+  -- Section 5: Danger zone — factory reset. Left column, under
+  -- Looting: left runs Looting + Danger, right runs Rolling +
+  -- Automation + Area loot — bottoms close, no dead space, no footer.
   do
     local contentH = BH
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
@@ -2100,14 +2178,18 @@ end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the announce
--- rarity dropdown button + the raider-frame policy button + the
--- auto-raid-roll category buttons + the sub-threshold auto-loot button.
+-- rarity dropdown button + the area-loot group + the raider-frame
+-- policy button + the auto-raid-roll category buttons + the
+-- sub-threshold auto-loot button.
 -- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
--- raiderFrame, autoRaidRoll, autoLootBelow } (nil before first Setup render).
+-- areaLoot, areaLootDeath, areaLootStop, areaLootCombat, raiderFrame,
+-- autoRaidRoll, autoLootBelow } (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, announceQuality = sb.announceQuality,
+    areaLoot = sb.areaLoot, areaLootDeath = sb.areaLootDeath,
+    areaLootStop = sb.areaLootStop, areaLootCombat = sb.areaLootCombat,
     raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
     autoLootBelow = sb.autoLootBelow }
 end
@@ -2281,15 +2363,19 @@ end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
 -- switching pair + the boss-threshold dropdown button + the announce
--- rarity dropdown button + the raider-frame policy button + the
--- auto-raid-roll category buttons + the sub-threshold auto-loot button +
--- the roll-timer slider/readout. Returns { mlOnBoss, backToGroup,
--- bossThreshold, announceQuality, raiderFrame, autoRaidRoll, autoLootBelow,
--- rollSlider, rollReadout } (nil before first Setup render).
+-- rarity dropdown button + the area-loot group + the raider-frame
+-- policy button + the auto-raid-roll category buttons + the
+-- sub-threshold auto-loot button + the roll-timer slider/readout.
+-- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
+-- areaLoot, areaLootDeath, areaLootStop, areaLootCombat, raiderFrame,
+-- autoRaidRoll, autoLootBelow, rollSlider, rollReadout }
+-- (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
   return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
     bossThreshold = sb.bossThreshold, announceQuality = sb.announceQuality,
+    areaLoot = sb.areaLoot, areaLootDeath = sb.areaLootDeath,
+    areaLootStop = sb.areaLootStop, areaLootCombat = sb.areaLootCombat,
     raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
     autoLootBelow = sb.autoLootBelow,
     rollSlider = sb.rollSlider, rollReadout = sb.rollReadout }

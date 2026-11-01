@@ -103,6 +103,15 @@ function Z.InitDB()
   -- Sub-threshold corpse auto-loot (Setup tab): take free rows + coin
   -- straight off the corpse, no clicks. Absent = off.
   if ZugLootDB.autoLootBelow == nil then ZugLootDB.autoLootBelow = false end
+  -- Area-loot engine (Setup "Area loot" group, ported from AutoAreaLoot):
+  -- event-driven nearby-corpse looting via the ClassicAPI DLL.
+  -- Defaults to OFF; death + stop triggers + combat looting default ON
+  -- inside the feature (donor parity). Absent table = backfilled.
+  if type(ZugLootDB.areaLoot) ~= "table" then ZugLootDB.areaLoot = {} end
+  if ZugLootDB.areaLoot.enabled == nil then ZugLootDB.areaLoot.enabled = false end
+  if ZugLootDB.areaLoot.lootOnDeath == nil then ZugLootDB.areaLoot.lootOnDeath = true end
+  if ZugLootDB.areaLoot.lootOnStop == nil then ZugLootDB.areaLoot.lootOnStop = true end
+  if ZugLootDB.areaLoot.lootInCombat == nil then ZugLootDB.areaLoot.lootInCombat = true end
   -- window pops for master-loot rolls only; "all" = legacy (also
   -- mirror group-loot rolls + local preview). Absent = default.
   if ZugLootDB.raiderFrame ~= "all" then ZugLootDB.raiderFrame = "ml" end
@@ -180,6 +189,9 @@ function Z.DoResetAllSettings()
     if Z.LootWindow.Hide then Z.LootWindow.Hide() end
   end
   if Z.RaiderLootUI and Z.RaiderLootUI.Hide then Z.RaiderLootUI.Hide() end
+  -- Area-loot walk state: a reset must never leave a corpse walk or
+  -- pending scan behind (config kept — only runtime is dropped).
+  if Z.AreaLoot and Z.AreaLoot.Shutdown then Z.AreaLoot.Shutdown() end
   if Z.MainWindow then Z.MainWindow.Refresh() end
   if Z.SRView then Z.SRView.Refresh() end
 end
@@ -217,11 +229,16 @@ function Z.OnEvent(event, arg1, arg2, arg3, arg4)
     if Z.VersionGrid then Z.VersionGrid.Announce() end
     -- Minimap die button (nil-safe: Build no-ops without frame APIs).
     if Z.Minimap then pcall(Z.Minimap.Build) end
+    -- Area-loot engine: registers its own frame/events (nil-safe
+    -- headless: logic only, no frame). Missing ClassicAPI DLL warns
+    -- once and leaves the feature inert.
+    if Z.AreaLoot and Z.AreaLoot.Init then pcall(Z.AreaLoot.Init) end
   elseif Z.Comm then
     Z.Comm.OnEvent(event, arg1, arg2, arg3, arg4)
   end
   if Z.MasterLootUI and Z.MasterLootUI.OnEvent then Z.MasterLootUI.OnEvent(event, arg1, arg2, arg3, arg4) end
   if Z.RaiderLootUI and Z.RaiderLootUI.OnEvent then Z.RaiderLootUI.OnEvent(event, arg1, arg2, arg3, arg4) end
+  if Z.AreaLoot and Z.AreaLoot.OnEvent then Z.AreaLoot.OnEvent(event, arg1) end
   if Z.LootWindow and Z.LootWindow.OnEvent then Z.LootWindow.OnEvent(event, arg1) end
 end
 

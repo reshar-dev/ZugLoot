@@ -609,6 +609,36 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
   on, the ML is told all rollers are auto (the rolls themselves still
   arrive as normal `/roll` chat).
 
+### 4.5b Area loot (`AreaLoot.lua`)
+
+Event-driven automatic nearby-corpse looting, imported from
+`../AutoAreaLoot` (same engine, ZugLoot-homed: settings live in
+`ZugLootDB.areaLoot` with their own Setup group, scheduling runs on
+`ZugLoot.Timer`, looted corpses keep flowing through ZugLoot's own
+loot window). ClassicAPI DLL required: without `C_Loot.LootAllCorpses`
+the feature is inert (settings persist, nothing ever scans — one
+missing-DLL warning, status line shows it).
+
+- Master switch (`AreaLoot.IsOn/SetEnabled`, default OFF) + three
+  toggles defaulting ON inside the feature: death trigger
+  (`M.DeathOn/SetDeath`, UNIT_DIED with a range check, combat-text
+  fallback), movement-stop trigger (`M.StopOn/SetStop`: 0.15s settle,
+  cancels on move, coalesces same-area stops, re-arms on 5+ yd moves),
+  combat looting (`M.CombatOn/SetCombat`: loot on the move in combat).
+- Battle rules mirror the donor: casts/channels, AoE reticles,
+  manual windows, player-control loss and dead/ghost block; deferred
+  triggers queue by priority (retry < combat < moved < death) and
+  re-service; one post-combat pass; empty scans retry twice; timeout
+  recovery; corpse walk pins live target as focus and restores it.
+- ZugLoot-aware deferral: a corpse ZugLoot's own window already shows
+  (`MasterLootUI.lootOpen`) counts as a manual window — the walk never
+  fires into a corpse the player is working. Closing it re-services
+  the queue.
+- Pure gates + injectable state are headless-testable (`M state`,
+  stubbed `C_Loot`, `ZugLoot.Timer` driving); the client frame
+  (event registrations, speed-movement poll) only builds in-game.
+  Test: `tests/test_arealoot.lua`.
+
 ### 4.6 Simulation (`Sim.lua`)
 
 In-game, no raid needed. **Requires the loaded sheet** — without one the
@@ -727,6 +757,7 @@ ZugLoot/
   LootWindow.lua     ML loot list (numbered icon/name/SR-HR rows + row detail)
   RaiderLootUI.lua   LootBlare-like frame (master-loot rolls; group-loot mirror only in ALL mode)
   AutoRoll.lua       auto-roll + auto-resolve eligibility
+  AreaLoot.lua       event-driven area looting (AutoAreaLoot engine, ClassicAPI DLL gated)
   VersionGrid.lua    members grid + version request handling
   AtlasLoot.lua      live Atlas-CFM loot source (boss/raid/trash chance rolls)
   RaidArchive.lua    raid history snapshots: view / continue past raids

@@ -44,12 +44,15 @@ BUTTONS = {
     "Rolling": ["Auto-roll: ON", "Roll window: ML"],
     "Looting": ["Loot frame: ZUG", "ML on boss: OFF", "Back to group: OFF",
                 "Threshold: Epic (4)", "Announce: Rare (3)"],
+    "Area loot": ["Area loot: OFF", "On death: ON", "On stop: ON",
+                    "In combat: ON"],
     "Danger zone": ["Reset all settings"],
 }
 AUTO_CATS = ["ZG coins/bijous", "MC mats", "AQ scarabs/idols",
              "Corrupted Sand", "Dream shards", "Naxx scraps",
              "Necrotic Runes"]
 LOOTING_INFO = ["Drops logged: 0  (/zl log)"]
+AREA_LOOT_INFO = ["ClassicAPI missing"]
 
 GRID_W = BODY_W - 8
 # Members-tab remainder split + the window-axis chrome shift
@@ -69,13 +72,14 @@ _auto_rows = math.ceil(N_CATS / 2)
 CONTENT = {
     "Rolling": BH + 8 + 45,  # duo pair + timer cell (readout/track/captions)
     "Looting": BH + 8 + BH + 8 + BH + 8 + 21,  # 3 duo rows + drop-count line
+    "Area loot": BH + 8 + BH + 8 + 21,  # 2 duo rows + status line
     "Automation": (_auto_rows * SMALL_H + (_auto_rows - 1) * 4
                      + 8 + SMALL_H),
     "Danger zone": BH,
 }
 panels = {}  # title -> (x, top, w, h)
 ly = ry = 52
-for t in ["Rolling", "Looting", "Automation"]:
+for t in ["Rolling", "Looting", "Automation", "Area loot"]:
     h = PAD_TOP + CONTENT[t] + PAD_BOT
     if t == "Looting":
         panels[t] = (LEFT_X, ly, COL_W, h)
@@ -171,7 +175,7 @@ for title in TITLES:
     rounded_panel(x, y0, x + w, y0 + h)
     d.text((x + 8, y0 + 6), title, font=F_HEAD, fill=G)
     by, bx = y0 + PAD_TOP, x + 8
-    if title in ("Rolling", "Looting"):
+    if title in ("Rolling", "Looting", "Area loot"):
         # mirrors the Lua duoButton pairs: two-across, PAD_SIDE margins.
         bl = BUTTONS[title]
         for r in range(0, len(bl), 2):
@@ -191,6 +195,11 @@ for title in TITLES:
         if title == "Looting":
             by += 8
             for line in LOOTING_INFO:
+                d.text((bx, by + 2), line, font=F_SMALL, fill=MUTE)
+                by += 15
+        if title == "Area loot":
+            by += 8
+            for line in AREA_LOOT_INFO:
                 d.text((bx, by + 2), line, font=F_SMALL, fill=MUTE)
                 by += 15
     elif title == "Automation":

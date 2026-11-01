@@ -34,7 +34,11 @@ local wow = {
   "GetLootMethod", "GetLootMaster", "GetLootThreshold",
   "GetLootSlotInfo", "GetLootSlotLink", "GetLootSlotType",
   "GetNumLootItems", "GetItemInfo", "GetItemQualityColor",
-  "GetLootRollItemLink", "GetLootRollTimeLeft",
+  "GetLootRollItemLink", "GetLootRollTimeLeft", "GetUnitSpeed",
+  "UnitPosition", "UnitDistanceSquared", "FocusUnit", "TargetUnit",
+  "ClearTarget", "UnitIsDead", "UnitIsUnit", "UnitCanAttack",
+  "UnitChannelInfo", "UnitCastingInfo", "UnitIsDeadOrGhost",
+  "UnitAffectingCombat", "GetNetStats",
   "GetMasterLootCandidate", "GiveMasterLoot",
   "SetLootMethod", "SetLootThreshold", "SetRaidTargetIconTexture",
   "ConfirmLootSlot", "CloseLoot", "RollOnLoot",
@@ -48,6 +52,9 @@ local wow = {
   "Base64Encode", "Base64Decode",
   -- Optional dependency (Atlas-CFM loot tables), probed, never required.
   "AtlasCFM",
+  -- ClassicAPI DLL tables (probed, never required): loot engine +
+  -- cast mirrors + timer + event-validity. Absent without the DLL.
+  "C_Loot", "C_Spell", "C_Timer", "C_EventUtils",
   -- 5.0-compat probes: absent on 5.1+, present on the 1.12 client.
   -- (Util.lua polyfills string.match/string.gmatch when missing.)
   "math.mod", "string.gfind", "table.unpack",

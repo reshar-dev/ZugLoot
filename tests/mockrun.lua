@@ -100,6 +100,7 @@ dofile("Comm.lua");
 dofile("Pysanka.lua");
 dofile("SRImport.lua");
 dofile("AutoRoll.lua");
+dofile("AreaLoot.lua");
 ZugLoot.VersionGrid = { seen={}, RosterNames=function() return {"A","B"} end, GridNames=function() return {{name="A",inGroup=true},{name="B",inGroup=true}} end, StatusFor=function() return "GREEN" end, ColorFor=function() return "GREEN" end, Request=function() end };
 dofile("MainWindow.lua");
 dofile("LootWindow.lua");
@@ -662,21 +663,23 @@ Z.DB.backToGroup = false;
 Z.MainWindow.SelectTab("setup");
 -- setup panels: sorted categories, one rounded gold panel each.
 local panels = Z.MainWindow.DebugSetupPanels();
-assert(panels ~= nil and #panels == 4, "four setup panels, got: " .. tostring(panels and #panels));
-local wantTitles = { "Rolling", "Looting", "Automation", "Danger zone" };
-for i = 1, 4 do
+assert(panels ~= nil and #panels == 5, "five setup panels, got: " .. tostring(panels and #panels));
+local wantTitles = { "Rolling", "Looting", "Automation", "Area loot", "Danger zone" };
+for i = 1, 5 do
   assert(panels[i].title == wantTitles[i], "panel " .. i .. " sorted: " .. tostring(panels[i].title));
 end
--- 2x2 grid: left runs Looting(2) + Danger zone(4), right runs
--- Rolling(1) + Automation(3). Columns top-align, sections stack down.
+-- 2x2 grid: left runs Looting(2) + Danger zone(5), right runs
+-- Rolling(1) + Automation(3) + Area loot(4). Columns top-align,
+-- sections stack down.
 assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
 assert(panels[3].top < panels[1].top, "Automation under Rolling");
-assert(panels[4].top < panels[2].top, "Danger zone under Looting");
+assert(panels[4].top < panels[3].top, "Area loot under Automation");
+assert(panels[5].top < panels[2].top, "Danger zone under Looting");
 -- ordering: each column stacks downward without overlap; the row
 -- height fits the deeper column. (Absolute heights vary by width —
 -- the auto-need grid goes two-across wider up and the timer row adds
 -- a row to Rolling — so pin the order, not hard numbers.)
-for i = 1, 4 do
+for i = 1, 5 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
 end
@@ -773,6 +776,30 @@ Z.MainWindow.announceDropdown.rows[4]:GetScript("OnClick")();
 assert(Z.DB.announceQuality == 4, "dropdown click stores epic");
 assert(Z.MainWindow.announceDropdown == nil, "announce dropdown closes on pick");
 Z.DB.announceQuality = nil;
+-- area loot group: master + 3 trigger toggles exist, flip DB flags, relabel.
+-- No ClassicAPI here (headless): status line shows the missing-DLL note.
+Z.DB.areaLoot = nil;
+Z.MainWindow.SelectTab("setup");
+local stAL = Z.MainWindow.DebugSetupToggles();
+assert(stAL.areaLoot ~= nil, "area loot master built");
+assert(stAL.areaLootDeath ~= nil, "death toggle built");
+assert(stAL.areaLootStop ~= nil, "stop toggle built");
+assert(stAL.areaLootCombat ~= nil, "combat toggle built");
+assert(string.find(stAL.areaLoot.label or "", "OFF", 1, true) ~= nil, "area loot starts OFF");
+assert(string.find(stAL.areaLootDeath.label or "", "ON", 1, true) ~= nil, "death trigger defaults ON");
+assert(string.find(stAL.areaLootStop.label or "", "ON", 1, true) ~= nil, "stop trigger defaults ON");
+assert(string.find(stAL.areaLootCombat.label or "", "ON", 1, true) ~= nil, "combat looting defaults ON");
+assert(Z.DB.areaLoot ~= nil and Z.DB.areaLoot.enabled == false, "master backfills OFF");
+stAL.areaLoot:GetScript("OnClick")();
+assert(Z.DB.areaLoot.enabled == true, "master toggle flips the flag");
+assert(string.find(stAL.areaLoot.label or "", "ON", 1, true) ~= nil, "master toggle relabels");
+stAL.areaLootDeath:GetScript("OnClick")();
+assert(Z.DB.areaLoot.lootOnDeath == false, "death toggle flips the flag");
+stAL.areaLootStop:GetScript("OnClick")();
+assert(Z.DB.areaLoot.lootOnStop == false, "stop toggle flips the flag");
+stAL.areaLootCombat:GetScript("OnClick")();
+assert(Z.DB.areaLoot.lootInCombat == false, "combat toggle flips the flag");
+Z.DB.areaLoot = nil;
 -- raider-frame policy toggle: ML (default) <-> ALL, label follows.
 Z.DB.raiderFrame = nil;
 Z.MainWindow.SelectTab("setup");

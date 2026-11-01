@@ -5,7 +5,7 @@
 ## Notes: SR-based loot for master looters and raiders. Inspired by RollFor + LootBlare.
 ## SavedVariables: ZugLootDB
 ## SavedVariablesPerCharacter: ZugLootCharDB
-## OptionalDeps: Atlas-CFM
+## OptionalDeps: Atlas-CFM AutoAreaLoot
 
 Constants.lua
 Util.lua
@@ -27,6 +27,7 @@ RollList.lua
 LootWindow.lua
 RaiderLootUI.lua
 AutoRoll.lua
+AreaLoot.lua
 VersionGrid.lua
 Pysanka.lua
 MainWindow.lua
