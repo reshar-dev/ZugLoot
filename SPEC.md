@@ -628,9 +628,11 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
   decision time (`Award` reads the tick; the raid-roll finish captures it
   before `Award` closes the window) — a ticked award overwrites a stale
   pick-tick with the actual winner. Untick to stop remembering.
-- Setup section (own category, left column under Area loot): the list
-  (two-across duo rows, item name or `item:id`, sorted by itemID, selected
-  row shows `>>`), a Remove button (drops the selected entry and clears
+- Setup section (own category, left column under Area loot): a proper
+  scroll list (1.12 `FauxScrollFrame` pattern — fixed 6-row window,
+  scrollbar + mousewheel, recycled row pool; name left, remembered
+  state right, sorted by itemID, selected row highlighted), a Remove
+  button (drops the selected entry and clears
   the selection), and a textbox below showing the selected row's state
   (`Raid-roll on open` / `Award to <name> on open`) or the empty hint.
   Selection is session-only (`M.rememberSel`, cleared by factory reset).

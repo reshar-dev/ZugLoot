@@ -1984,30 +1984,142 @@ function M.RenderSetup()
     ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
 
-  -- Section 5: Remembered — per-item auto-actions saved from the ML
-  -- roll window's top-right checkbox. List + Remove + state textbox.
-  -- Left column, under Area loot. Headless-safe: every frame op is
-  -- CreateFrame-probed like the rest of the tab (mock frames carry the
-  -- button/label/text hooks the tests assert).
+  -- Section 5: Remembered -- per-item auto-actions saved from the ML
+  -- roll window's top-right checkbox. Proper scroll list (1.12
+  -- FauxScrollFrame pattern: fixed window of rows, scrollbar, offset)
+  -- + Remove + state textbox. Left column, under Area loot.
+  -- Headless-safe: every frame op is CreateFrame/nil-probed like the
+  -- rest of the tab (mock frames carry the scroll/row/text hooks the
+  -- tests assert); without FauxScrollFrame APIs the list degrades to
+  -- a fixed window (first rows visible, no scrolling).
   do
     -- M.rememberSel (selected itemID, session-only) is NOT cleared here:
     -- RenderSetup runs on every Refresh, and wiping it would drop the
-    -- selection under any unrelated re-render. refreshRemembered drops
-    -- it only when its entry is gone.
-    -- Layout (top down): list rows from -PAD_TOP, then one band with
+    -- selection under any unrelated re-render. RefreshRememberedList
+    -- drops it only when its entry is gone.
+    -- Layout (top down): scroll list from -PAD_TOP, then one band with
     -- Remove (left cell) + state textbox (right cell). The band sits
-    -- BELOW the list, so refreshRemembered repositions both widgets
-    -- every render (list height varies with the entry count).
-    local ROW_H = 20
-    local MAX_ROWS = 8 -- list shows 8 rows; more stay stored, unlisted
-    local panel = M.SetupPanel(gridF, colW, PAD_TOP + ROW_H + 4 + SMALL_H + PAD_BOTTOM)
+    -- BELOW the list at a FIXED offset (the list window never resizes),
+    -- so only the rows repaint per render -- never the band.
+    local ROW_H = 16 -- one list row (dropdown-row parity)
+    local NUM_ROWS = 6 -- visible list window (scrolls past this)
+    local SCROLL_W = 16 -- scrollbar width (FauxScrollFrameTemplate slot)
+    local LIST_PAD = 4 -- breathing room under the list
+    local listW = colW - PAD_SIDE * 2
+    local listH = NUM_ROWS * ROW_H
+    local panelH = PAD_TOP + listH + LIST_PAD + SMALL_H + PAD_BOTTOM
+    local panel = M.SetupPanel(gridF, colW, panelH)
     panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Remembered")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
+    -- Scroll list: bordered frame holding the row window; rows anchor
+    -- inside it, the scrollbar rides its right edge. One FontString per
+    -- row (name left, state right) on a Button for click + hover.
+    local listF = CreateFrame("Frame", nil, panel)
+    if listF then
+      listF:SetWidth(listW) listF:SetHeight(listH)
+      listF:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
+      if listF.SetBackdrop then
+        listF:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+          edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+          tile = true, tileSize = 16, edgeSize = 16,
+          insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+      end
+      if listF.SetBackdropColor then listF:SetBackdropColor(0, 0, 0, 0.6) end
+      if listF.EnableMouseWheel then listF:EnableMouseWheel(true) end
+    end
+    local scrollF = nil
+    if FauxScrollFrame_Update and listF and CreateFrame then
+      local okSF, sf = pcall(CreateFrame, "ScrollFrame",
+        "ZugLootRememberedScroll", listF, "FauxScrollFrameTemplate")
+      if okSF and type(sf) == "table" and sf.SetWidth then
+        scrollF = sf
+        scrollF:SetWidth(listW) scrollF:SetHeight(listH)
+        if scrollF.SetPoint then
+          scrollF:SetPoint("TOPLEFT", listF, "TOPLEFT", 0, 0)
+        end
+        if scrollF.SetScript then
+          scrollF:SetScript("OnVerticalScroll", function()
+            if FauxScrollFrame_OnVerticalScroll then
+              pcall(FauxScrollFrame_OnVerticalScroll, scrollF, arg1,
+                ROW_H, M.RefreshRememberedList)
+            else
+              M.RefreshRememberedList()
+            end
+          end)
+        end
+        if listF.SetScript then
+          listF:SetScript("OnMouseWheel", function()
+            -- Template scrollbar is a named global (ScrollBar field is
+            -- not reliable); getglobal is nil-safe headless.
+            local bar = (getglobal and getglobal(scrollName .. "ScrollBar"))
+              or (scrollF and scrollF.ScrollBar)
+            if bar and bar.GetValue and scrollF and scrollF.SetVerticalScroll then
+              local okV, v = pcall(bar.GetValue, bar)
+              v = (okV and tonumber(v)) or 0
+              local nv = v - (arg1 or 0) * ROW_H * 2
+              if nv < 0 then nv = 0 end
+              pcall(scrollF.SetVerticalScroll, scrollF, nv)
+              M.RefreshRememberedList()
+            end
+          end)
+        end
+      end
+    end
+    -- Row pool: fixed NUM_ROWS buttons, recycled on scroll (the list
+    -- never rebuilds widgets -- refresh only repaints labels). Rows
+    -- hidden when past the entry count. Mock frames keep the same
+    -- row/label/hook shape the tests assert (row, paint, entry).
+    local rowPool = {}
+    do
+      local rowW = listW - (scrollF and SCROLL_W or 0) - 4
+      for i = 1, NUM_ROWS do
+        local rb = CreateFrame("Button", nil, listF or panel)
+        if type(rb) ~= "table" or not rb.SetWidth then break end
+        rb:SetWidth(rowW) rb:SetHeight(ROW_H)
+        if rb.SetPoint then
+          rb:SetPoint("TOPLEFT", listF or panel, "TOPLEFT",
+            2, -((i - 1) * ROW_H))
+        end
+        local label = nil
+        if rb.CreateFontString then
+          label = rb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+          if label then
+            if label.SetPoint then label:SetPoint("LEFT", rb, "LEFT", 4, 0) end
+            if label.SetWidth then label:SetWidth(rowW - 8) end
+            if label.SetJustifyH then label:SetJustifyH("LEFT") end
+          end
+        end
+        local state = nil
+        if rb.CreateFontString then
+          state = rb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+          if state then
+            if state.SetPoint then state:SetPoint("RIGHT", rb, "RIGHT", -4, 0) end
+            if state.SetWidth then state:SetWidth(90) end
+            if state.SetJustifyH then state:SetJustifyH("RIGHT") end
+          end
+        end
+        if rb.SetBackdrop then
+          rb:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8x8" })
+        end
+        local function hover(a)
+          if rb.SetBackdropColor then rb:SetBackdropColor(0.125, 0.624, 0.976, a) end
+        end
+        hover(0)
+        if rb.SetScript then
+          rb:SetScript("OnEnter", function() hover(0.2) end)
+          rb:SetScript("OnLeave", function() hover(0) end)
+        end
+        rb.zlLabel = label
+        rb.zlState = state
+        table.insert(rowPool, rb)
+      end
+    end
     -- Remove button: drops the SELECTED entry from Z.DB.remembered.
-    -- Left cell of the below-list band (repositioned per render).
-    local remB = gridSingle(panel, -PAD_TOP - ROW_H - 4, SMALL_H)
+    -- Left cell of the fixed below-list band.
+    local bandY = -PAD_TOP - listH - LIST_PAD
+    local remB = gridSingle(panel, bandY, SMALL_H)
     remB:SetText("Remove")
     remB:SetScript("OnClick", function()
       local id = M.rememberSel
@@ -2021,118 +2133,30 @@ function M.RenderSetup()
     Tip(remB, "Remove", "Forget the selected item's remembered decision.",
       "The next drop rolls normally; tick the box again to re-remember.")
     -- State textbox: the remembered state of the selected row (or the
-    -- empty hint). Right cell of the below-list band (repositioned per
-    -- render). Read-only; no Tip (FontStrings carry no GetScript — a
-    -- Tip would crash the render headless and in-game on bare labels).
+    -- empty hint). Right cell of the fixed below-list band. Read-only;
+    -- no Tip (FontStrings carry no GetScript -- a Tip would crash the
+    -- render headless and in-game on bare labels).
     local stateFS = FS(panel, "GameFontHighlightSmall", "(select an item)")
     if stateFS.SetPoint then
       stateFS:SetPoint("TOPLEFT", panel, "TOPLEFT",
-        PAD_SIDE + duoW + 8, -PAD_TOP - ROW_H - 4)
+        PAD_SIDE + duoW + 8, bandY - 3)
     end
     if stateFS.SetWidth then stateFS:SetWidth(duoW) end
     if stateFS.SetJustifyH then stateFS:SetJustifyH("LEFT") end
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.rememberedState = stateFS
     M.setupBtns.rememberedRemoveBtn = remB
+    M.setupBtns.rememberedScroll = scrollF
+    M.setupBtns.rememberedList = listF
+    M.setupBtns.rememberedRows = rowPool
     local function refreshRemembered()
-      local MLUI = Z.MasterLootUI
-      local list = (MLUI and MLUI.RememberedList and MLUI.RememberedList()) or {}
-      local n = Z.Util.ArrayCount(list)
-      -- Wipe old row widgets (rebuilt below).
-      if M.setupBtns.rememberedRows then
-        for i = 1, Z.Util.ArrayCount(M.setupBtns.rememberedRows) do
-          local rb = M.setupBtns.rememberedRows[i]
-          if rb and rb.row and rb.row.Hide then rb.row:Hide() end
-        end
-      end
-      M.setupBtns.rememberedRows = {}
-      if M.setupBtns.rememberedEmpty and M.setupBtns.rememberedEmpty.Hide then
-        M.setupBtns.rememberedEmpty:Hide()
-        M.setupBtns.rememberedEmpty = nil
-      end
-      if n == 0 then
-        local hint = FS(panel, "GameFontHighlightSmall",
-          "(nothing remembered — tick the box on a roll window)")
-        if hint.SetPoint then
-          hint:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
-        end
-        if hint.SetWidth then hint:SetWidth(colW - PAD_SIDE * 2) end
-        if hint.SetJustifyH then hint:SetJustifyH("LEFT") end
-        M.setupBtns.rememberedEmpty = hint
-        M.rememberSel = nil
-      else
-        -- Selection survives refresh when its entry still exists.
-        local stillThere = false
-        for i = 1, n do
-          if list[i] and list[i].itemID == M.rememberSel then
-            stillThere = true break
-          end
-        end
-        if not stillThere then M.rememberSel = nil end
-        local shown = n
-        if shown > MAX_ROWS then shown = MAX_ROWS end
-        for i = 1, shown do
-          local e = list[i] -- fresh local per iteration for the closure
-          local itemID = e.itemID
-          local col = math.mod(i - 1, 2)
-          local rowY = -PAD_TOP - math.floor((i - 1) / 2) * (ROW_H + 4)
-          local selB = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-          selB:SetWidth(duoW) selB:SetHeight(ROW_H)
-          selB:SetPoint("TOPLEFT", panel, "TOPLEFT",
-            PAD_SIDE + col * (duoW + 8), rowY)
-          local function paintSel()
-            local label = M.RememberedItemLabel(e)
-            if selB.SetText then
-              if M.rememberSel == itemID then label = ">> " .. label end
-              selB:SetText(label)
-            end
-          end
-          paintSel()
-          selB:SetScript("OnClick", function()
-            if M.rememberSel == itemID then M.rememberSel = nil
-            else M.rememberSel = itemID end
-            M.RefreshRememberedState()
-            refreshRemembered()
-          end)
-          Tip(selB, "Remembered item", (MLUI and MLUI.RememberedLine
-            and MLUI.RememberedLine(e)) or tostring(e.mode),
-            "Click to show the remembered state below.")
-          M.setupBtns.rememberedRows[i] = { row = selB, itemID = itemID,
-            entry = e, paint = paintSel }
-        end
-      end
-      M.RefreshRememberedState()
-      -- Size to the list, then park the Remove + state band BELOW it:
-      -- list rows + 4px gap + one SMALL_H band. Capped at MAX_ROWS;
-      -- Refresh re-renders, so sizing here is enough (no live
-      -- insert/delete without a re-render). bandY is the shared row
-      -- top for remB (left cell) + stateFS (right cell).
-      local rows = n
-      if rows > MAX_ROWS then rows = MAX_ROWS end
-      local listH = ROW_H
-      if n > 0 then
-        listH = math.ceil(rows / 2) * (ROW_H + 4) - 4
-      end
-      local bandY = -PAD_TOP - listH - 4
-      if remB.ClearAllPoints then remB:ClearAllPoints() end
-      if remB.SetPoint then
-        remB:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, bandY)
-      end
-      if stateFS.ClearAllPoints then stateFS:ClearAllPoints() end
-      if stateFS.SetPoint then
-        stateFS:SetPoint("TOPLEFT", panel, "TOPLEFT",
-          PAD_SIDE + duoW + 8, bandY - 3)
-      end
-      if panel.SetHeight then
-        panel:SetHeight(PAD_TOP + listH + 4 + SMALL_H + PAD_BOTTOM)
-      end
-      return list
+      M.RefreshRememberedList()
+      return M.RefreshRememberedState()
     end
     M.setupBtns.refreshRemembered = refreshRemembered
     refreshRemembered()
     table.insert(panels, { title = "Remembered", panel = panel, top = ly })
-    ly = ly - (panel.GetHeight and panel:GetHeight()
-      or (PAD_TOP + ROW_H + 4 + SMALL_H + PAD_BOTTOM)) - GAP
+    ly = ly - panelH - GAP
   end
   -- Section 6: Danger zone — factory reset. Right column, under
   -- Automation: left runs Looting + Area loot + Remembered, right runs
@@ -2236,7 +2260,9 @@ end
 
 -- Remembered section helpers (Setup tab, headless-testable):
 -- RememberedItemLabel(entry) -> short row label (readable name, never
--- a bare item:id; trimmed to the duo-cell width, id kept in full);
+-- a bare item:id; trimmed to the row width, id kept in full);
+-- RefreshRememberedList() repaints the scroll-list row pool from
+-- Z.DB.remembered (FauxScrollFrame offset when the client scrolled);
 -- RefreshRememberedState() repaints the state textbox from the current
 -- selection (M.rememberSel) and returns its text.
 function M.RememberedItemLabel(e)
@@ -2245,7 +2271,9 @@ function M.RememberedItemLabel(e)
     nm = M.RememberedItemName(e.itemID, e.link)
   end
   nm = nm or ("item:" .. tostring(e and e.itemID))
-  if string.len(nm) > 18 then nm = string.sub(nm, 1, 17) .. "..." end
+  -- Full-width list rows (name left, state right): trim only names
+  -- that would run under the state column.
+  if string.len(nm) > 40 then nm = string.sub(nm, 1, 39) .. "..." end
   return nm
 end
 -- Readable name for a remembered entry: stored link text > LootWindow
@@ -2287,14 +2315,81 @@ function M.RefreshRememberedState()
     end
   end
   if fs and fs.SetText then fs:SetText(text) end
-  -- Repaint the row ticks (selected row shows ">> ").
-  if sb.rememberedRows then
-    for i = 1, Z.Util.ArrayCount(sb.rememberedRows) do
-      local rb = sb.rememberedRows[i]
-      if rb and rb.paint then rb.paint() end
+  M.RefreshRememberedList()
+  return text
+end
+-- Scroll-list painter: recycles the fixed row pool over the sorted
+-- entry list at the FauxScrollFrame offset (0 headless / without the
+-- scroll APIs). Each row shows item name + remembered state; the
+-- selected row highlights, others clear. Rows past the entry count
+-- hide; an empty list hides every row (the state textbox carries the
+-- hint). Headless-testable: offset injectable for the scroll math.
+function M.RefreshRememberedList(offset)
+  local sb = M.setupBtns or {}
+  local MLUI = Z.MasterLootUI
+  local list = (MLUI and MLUI.RememberedList and MLUI.RememberedList()) or {}
+  local n = Z.Util.ArrayCount(list)
+  -- Selection survives refresh when its entry still exists.
+  local stillThere = false
+  for i = 1, n do
+    if list[i] and list[i].itemID == M.rememberSel then
+      stillThere = true break
     end
   end
-  return text
+  if not stillThere then M.rememberSel = nil end
+  local off = tonumber(offset) or 0
+  if off < 0 then off = 0 end
+  if sb.rememberedScroll and FauxScrollFrame_GetOffset then
+    local okO, live = pcall(FauxScrollFrame_GetOffset, sb.rememberedScroll)
+    if okO and tonumber(live) then off = tonumber(live) end
+  end
+  if off > 0 and n == 0 then off = 0 end
+  local rows = sb.rememberedRows or {}
+  for i = 1, Z.Util.ArrayCount(rows) do
+    local rb = rows[i]
+    if rb then
+      local e = list[off + i]
+      rb.itemID = e and e.itemID or nil
+      rb.entry = e
+      if e then
+        if rb.Show then rb:Show() end
+        local label = M.RememberedItemLabel(e)
+        if M.rememberSel == e.itemID then label = ">> " .. label end
+        if rb.zlLabel and rb.zlLabel.SetText then
+          rb.zlLabel:SetText(label)
+        elseif rb.SetText then
+          rb:SetText(label)
+        end
+        local st = (MLUI and MLUI.RememberedLine and MLUI.RememberedLine(e))
+          or tostring(e.mode)
+        if rb.zlState and rb.zlState.SetText then
+          rb.zlState:SetText(st)
+        end
+        local sel = (M.rememberSel == e.itemID)
+        if rb.SetBackdropColor then
+          rb:SetBackdropColor(0.125, 0.624, 0.976, sel and 0.45 or 0)
+        end
+        if rb.SetScript then
+          rb:SetScript("OnClick", function()
+            if M.rememberSel == e.itemID then M.rememberSel = nil
+            else M.rememberSel = e.itemID end
+            M.RefreshRememberedState()
+          end)
+        end
+        Tip(rb, "Remembered item", st,
+          "Click to show the remembered state below.")
+      else
+        if rb.Hide then rb:Hide() end
+        rb.itemID = nil
+        rb.entry = nil
+      end
+    end
+  end
+  if sb.rememberedScroll and FauxScrollFrame_Update then
+    pcall(FauxScrollFrame_Update, sb.rememberedScroll, n,
+      Z.Util.ArrayCount(rows), 16)
+  end
+  return list
 end
 
 -- Test hook: live layout numbers. Guards the Lua-scoping rule above:
@@ -2568,7 +2663,8 @@ end
 -- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
 -- areaLoot, areaLootDeath, areaLootStop, areaLootCombat, raiderFrame,
 -- autoRaidRoll, autoLootBelow, rollSlider, rollReadout,
--- rememberedState, rememberedRows, rememberedRemoveBtn }
+-- rememberedState, rememberedRows, rememberedRemoveBtn,
+-- rememberedScroll, rememberedList }
 -- (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
@@ -2581,7 +2677,9 @@ function M.DebugSetupToggles()
     rollSlider = sb.rollSlider, rollReadout = sb.rollReadout,
     rememberedState = sb.rememberedState,
     rememberedRows = sb.rememberedRows,
-    rememberedRemoveBtn = sb.rememberedRemoveBtn }
+    rememberedRemoveBtn = sb.rememberedRemoveBtn,
+    rememberedScroll = sb.rememberedScroll,
+    rememberedList = sb.rememberedList }
 end
 
 function M.Build()

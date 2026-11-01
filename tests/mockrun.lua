@@ -810,24 +810,37 @@ assert(Z.DB.areaLoot.lootOnStop == false, "stop toggle flips the flag");
 stAL.areaLootCombat:GetScript("OnClick")();
 assert(Z.DB.areaLoot.lootInCombat == false, "combat toggle flips the flag");
 Z.DB.areaLoot = nil;
--- remembered section: empty list shows the hint; store -> row + state
--- textbox + remove; select row shows the remembered state below.
+-- remembered section: scroll list + Remove + state textbox. Empty
+-- list shows the hint; store -> rows paint; select row shows the
+-- remembered state below.
 Z.DB.remembered = nil;
 Z.MainWindow.SelectTab("setup");
 local stRem = Z.MainWindow.DebugSetupToggles();
 assert(stRem.rememberedRemoveBtn ~= nil, "remembered Remove built");
 assert(stRem.rememberedState ~= nil, "remembered state textbox built");
+assert(stRem.rememberedList ~= nil, "remembered list frame built");
+assert(stRem.rememberedScroll == nil, "no scroll frame headless (no FauxScrollFrame)");
+assert(stRem.rememberedRows ~= nil and #stRem.rememberedRows == 6, "six-row pool, got: " .. tostring(stRem.rememberedRows and #stRem.rememberedRows));
 assert(Z.MainWindow.rememberSel == nil, "no selection on empty list");
 assert(string.find(Z.MainWindow.RefreshRememberedState() or "", "select", 1, true) ~= nil,
   "empty state shows the hint");
+-- empty list: every pool row hidden.
+for i = 1, #stRem.rememberedRows do
+  assert(stRem.rememberedRows[i].hidden == true, "pool row " .. i .. " hidden when empty");
+end
 Z.MasterLootUI.RememberedSet(19019, true, "raidroll", nil, "|cffa335ee|Hitem:19019:0:0:0|h[Thunderfury]|h|r");
 Z.MasterLootUI.RememberedSet(17063, true, "award", "Carbon", nil);
 Z.MainWindow.SelectTab("setup");
 local stRem2 = Z.MainWindow.DebugSetupToggles();
-assert(stRem2.rememberedRows ~= nil and #stRem2.rememberedRows == 2, "two remembered rows, got: " .. tostring(stRem2.rememberedRows and #stRem2.rememberedRows));
-assert(stRem2.rememberedRows[1].itemID == 17063, "rows sorted by itemID");
+-- first two pool rows carry the sorted entries; the rest stay hidden.
+assert(stRem2.rememberedRows[1].itemID == 17063, "row 1 sorted first");
+assert(stRem2.rememberedRows[2].itemID == 19019, "row 2 sorted second");
+assert(stRem2.rememberedRows[1].hidden ~= true, "row 1 visible");
+assert(stRem2.rememberedRows[3].hidden == true, "row 3 hidden (only two entries)");
+assert(string.find(stRem2.rememberedRows[1].zlLabel.txt or "", "Test Sword", 1, true) ~= nil, "row 1 label names the item, got: " .. tostring(stRem2.rememberedRows[1].zlLabel.txt));
+assert(string.find(stRem2.rememberedRows[1].zlState.txt or "", "Carbon", 1, true) ~= nil, "row 1 state names the assignee, got: " .. tostring(stRem2.rememberedRows[1].zlState.txt));
 -- select the first row: state textbox names the remembered state.
-stRem2.rememberedRows[1].row:GetScript("OnClick")();
+stRem2.rememberedRows[1]:GetScript("OnClick")();
 assert(Z.MainWindow.rememberSel == 17063, "row click selects the item");
 local stateTxt = Z.MainWindow.RefreshRememberedState();
 assert(string.find(stateTxt or "", "Carbon", 1, true) ~= nil, "state shows the assignee, got: " .. tostring(stateTxt));

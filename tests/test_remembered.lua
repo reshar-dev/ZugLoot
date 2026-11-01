@@ -199,6 +199,61 @@ ML.roll = { itemID = 9999, mode = "SR", rolls = {} }
 eq(ML.ApplyRemembered(), false, "live roll blocks auto raid-roll")
 ML.roll = nil
 
+-- 7. Setup list painter (headless pool): sorted entries paint into
+-- the recycled rows at the offset; selection highlights; past-count
+-- rows hide; empty list hides everything and drops a stale selection.
+-- Drives the real MainWindow painter with a stubbed row pool (the
+-- module loads headless; only setupBtns/rememberSel are swapped).
+dofile("MainWindow.lua")
+reset()
+local function fakeRow()
+  local rb = { shown = true, label = nil, state = nil, scripts = {} }
+  function rb:Show() self.shown = true end
+  function rb:Hide() self.shown = false end
+  rb.zlLabel = { SetText = function(_, s) rb.label = s end }
+  rb.zlState = { SetText = function(_, s) rb.state = s end }
+  function rb:SetBackdropColor(r, g, b, a) rb.bg = a end
+  function rb:SetScript(ev, fn) rb.scripts[ev] = fn end
+  function rb:GetScript(ev) return rb.scripts[ev] end
+  return rb
+end
+local sbKeep, selKeep = ZugLoot.MainWindow.setupBtns, ZugLoot.MainWindow.rememberSel
+ZugLoot.MainWindow.setupBtns = { rememberedRows = { fakeRow(), fakeRow(), fakeRow() } }
+ZugLoot.MainWindow.rememberSel = 3002
+ML.RememberedSet(3001, true, "raidroll", nil, "|cffffffff|Hitem:3001|h[Alpha]|h|r")
+ML.RememberedSet(3002, true, "award", "Carbon", nil)
+ML.RememberedSet(3003, true, "award", "Bbb", nil)
+ok(type(ZugLoot.MainWindow.RefreshRememberedList) == "function", "list painter exists")
+ZugLoot.MainWindow.RefreshRememberedList(0)
+local rows = ZugLoot.MainWindow.setupBtns.rememberedRows
+eq(rows[1].itemID, 3001, "row 1 sorted first")
+eq(rows[2].itemID, 3002, "row 2 sorted second")
+eq(rows[3].itemID, 3003, "row 3 sorted third")
+ok(string.find(rows[1].label or "", "Alpha", 1, true) ~= nil, "row 1 names the item")
+ok(string.find(rows[2].state or "", "Carbon", 1, true) ~= nil, "row 2 states the assignee")
+eq(rows[2].bg, 0.45, "selected row highlighted")
+eq(rows[1].bg, 0, "unselected row clear")
+-- click toggles selection (the click repaints via RefreshRememberedState).
+rows[1].scripts.OnClick()
+eq(ZugLoot.MainWindow.rememberSel, 3001, "row click selects")
+rows[1].scripts.OnClick()
+eq(ZugLoot.MainWindow.rememberSel, nil, "row click again deselects")
+-- offset window: only the tail paints.
+ZugLoot.MainWindow.RefreshRememberedList(2)
+eq(rows[1].itemID, 3003, "offset skips to the tail")
+eq(rows[2].shown, false, "past-count rows hide")
+eq(rows[3].shown, false, "past-count rows hide (3)")
+-- stale selection drops.
+ZugLoot.MainWindow.rememberSel = 9999
+ZugLoot.MainWindow.RefreshRememberedList(0)
+eq(ZugLoot.MainWindow.rememberSel, nil, "stale selection dropped")
+-- empty list hides everything.
+ZugLoot.DB.remembered = {}
+ZugLoot.MainWindow.RefreshRememberedList(0)
+eq(rows[1].shown, false, "empty list hides row 1")
+ZugLoot.MainWindow.setupBtns = sbKeep
+ZugLoot.MainWindow.rememberSel = selKeep
+
 -- 7. Mid normal-roll tick arms (nothing storable yet); the award
 -- converges it to the winner. Tied award windows offer nothing.
 reset()
