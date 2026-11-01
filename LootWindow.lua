@@ -980,6 +980,15 @@ function M.BuildDetail(itemID)
   if sheet and Z.SRData and Z.SRData.SRNames then
     rollers = Z.SRData.SRNames(sheet, itemID)
   end
+  -- Remember checkbox seed: which remembered action applies to THIS
+  -- row right now — "raidroll" (the row would raid-roll on open) or
+  -- "award" + rememberName (it would direct-award that player).
+  -- Award context: single-holder pick rows prefill the holder (the
+  -- checkbox then means "this player, every drop"); anything else
+  -- checks only under an explicit compareName (see RememberBox).
+  -- Shared with the untick path (forgetting resets the row to seed).
+  local rememberMode, rememberName = M.SeedRememberContext(itemID,
+    rollers)
   return {
     itemID = itemID,
     link = it.link,
@@ -991,12 +1000,153 @@ function M.BuildDetail(itemID)
     ignored = it.ignored == true,
     rollers = rollers,
     single = Z.Util.ArrayCount(rollers) == 1,
+    rememberMode = rememberMode,
+    rememberName = rememberName,
+    -- NOTE: Z.MasterLootUI, not M.* — M here is the LootWindow module.
+    rememberChecked = (Z.MasterLootUI and Z.MasterLootUI.RememberedGet
+      and Z.MasterLootUI.RememberedGet(itemID) ~= nil),
     phase = "pick", -- pick -> rolling -> award
     rolls = {},
     menu = nil,
     countdown = nil,
     countdownDur = nil,
   }
+end
+
+-- Row seed for the remember checkbox: { mode, name } — the stored
+-- entry when one exists, else the single-holder award prefill, else
+-- nil (the RememberBox raid-roll fallback covers bare rows). Pure
+-- over (itemID, rollers); BuildDetail and the untick path share it so
+-- forgetting resets the row to seed instead of stranding stale context.
+function M.SeedRememberContext(itemID, rollers)
+  local MLUI = Z.MasterLootUI
+  local remembered = MLUI and MLUI.RememberedGet
+    and MLUI.RememberedGet(itemID) or nil
+  if remembered then return remembered.mode, remembered.name end
+  if Z.Util.ArrayCount(rollers or {}) == 1 and rollers[1] then
+    return "award", rollers[1]
+  end
+  return nil, nil
+end
+
+-- Remember checkbox state for the OPEN detail: { checked, mode, name,
+-- line }. checked = a remembered entry applies to this row right now.
+-- mode/name answer "what WOULD checking store", resolved by PHASE:
+-- award phase (clean top winner) = award to the winner; ... picks pass
+-- their candidate as compareName (award to them); otherwise the row
+-- context (single-holder prefill), falling back to raidroll on pick /
+-- rolling rows — so ticking ANY row stores something real, never a
+-- silent no-op. A tied award window offers nothing (resolve first).
+-- Pure, headless-testable (frame clicks toggle via ToggleRemember).
+function M.RememberBox(compareName)
+  local d = M.detail
+  if not d then return { checked = false } end
+  local MLUI = Z.MasterLootUI
+  local remembered = MLUI and MLUI.RememberedGet
+    and MLUI.RememberedGet(d.itemID) or nil
+  local mode = d.rememberMode
+  local name = d.rememberName
+  if compareName ~= nil then
+    if type(compareName) == "string" and compareName ~= "" then
+      mode, name = "award", compareName
+    else
+      mode, name = d.rememberMode, d.rememberName
+    end
+  elseif (d.phase or "pick") == "award" and d.menu then
+    -- Award window: the decision is the top winner. Tied = no winner
+    -- yet — offer nothing until the tie re-roll resolves.
+    local tied = {}
+    if MLUI and MLUI.TieNames then
+      tied = MLUI.TieNames(d.menu) or {}
+    end
+    if Z.Util.ArrayCount(tied) == 0 then
+      local winners = d.menu.winners or {}
+      if winners[1] and winners[1].name and winners[1].name ~= "" then
+        mode, name = "award", winners[1].name
+      end
+    else
+      mode, name = nil, nil
+    end
+  end
+  -- Pick/rolling rows with no award context fall back to raid-roll:
+  -- the checkbox always expresses a real decision.
+  if mode == nil and (d.phase or "pick") ~= "award" then
+    mode = "raidroll"
+  end
+  -- An award box needs a real name: no candidate, no check.
+  if mode == "award" and (type(name) ~= "string" or name == "") then
+    return { checked = false, mode = mode, name = name }
+  end
+  local checked = false
+  if remembered then
+    if MLUI and MLUI.RememberedBoxState then
+      checked = MLUI.RememberedBoxState(d.itemID, mode, name) ~= nil
+    elseif remembered.mode == mode then
+      checked = (mode ~= "award" or remembered.name == name)
+    end
+  end
+  local line = nil
+  if MLUI and MLUI.RememberedLine then
+    if checked then
+      line = MLUI.RememberedLine(remembered)
+    elseif mode == "raidroll" then
+      line = MLUI.RememberedLine({ mode = "raidroll" })
+    elseif mode == "award" then
+      line = MLUI.RememberedLine({ mode = "award", name = name })
+    end
+  end
+  return { checked = checked, mode = mode, name = name, line = line }
+end
+
+-- Toggle the remember checkbox. Keys off the VISUAL tick
+-- (d.rememberChecked), not stored-entry agreement: a ticked box always
+-- unticks + forgets; an unticked box ticks and stores the current
+-- phase decision at once (pick = holder award or raid-roll fallback,
+-- award = top winner, raid-roll in progress = raid-roll). The one
+-- exception is a NORMAL roll in progress: its outcome is unknowable
+-- until it finishes, so the tick only ARMS (no store — the award /
+-- raid-roll finish paths persist the ticked handling instead).
+-- compareName scopes an award check to that player (... picks pass it
+-- through); nil keeps the phase/row context. Returns the new tick.
+-- Headless-testable (no frame calls); the client checkbox calls this.
+function M.ToggleRemember(compareName)
+  local d = M.detail
+  if not d then return false end
+  local MLUI = Z.MasterLootUI
+  if not (MLUI and MLUI.RememberedSet) then return false end
+  if d.rememberChecked then
+    MLUI.RememberedSet(d.itemID, false)
+    d.rememberChecked = false
+    -- Back to seed: the forgotten entry must not strand its context
+    -- (re-ticking a bare row falls back to raid-roll, a lone holder
+    -- re-prefills). CompareName adopts (award-name path) still apply
+    -- after this — they write d.rememberName directly.
+    d.rememberMode, d.rememberName =
+      M.SeedRememberContext(d.itemID, d.rollers)
+    if M.RefreshDetail then M.RefreshDetail() end
+    return false
+  end
+  local box = M.RememberBox(compareName)
+  -- Mid normal-roll tick: arm only — nothing storable exists yet.
+  if (d.phase or "pick") == "rolling" then
+    local live = MLUI.roll
+    if not (live and live.itemID == d.itemID
+        and live.mode == "RAIDROLL") then
+      d.rememberChecked = true
+      if M.RefreshDetail then M.RefreshDetail() end
+      return true
+    end
+  end
+  if not box.mode then return false end
+  local stored = MLUI.RememberedSet(d.itemID, true, box.mode,
+    box.name, d.link)
+  d.rememberChecked = (stored ~= nil)
+  -- Keep the row context on what was actually stored.
+  if stored then
+    d.rememberMode, d.rememberName = stored.mode, stored.name
+  end
+  if M.RefreshDetail then M.RefreshDetail() end
+  return d.rememberChecked
 end
 
 -- Mirror the open roll onto the OPEN detail. Only the rolling window
@@ -1589,6 +1739,17 @@ function M.doAction(itemID, actionID, extra)
     -- name the normal winner in the trade note.
     local nm, via = extra, nil
     if type(extra) == "table" then nm, via = extra.name, extra.via end
+    -- Remember scope: a ticked box with no row context adopts the
+    -- ... pick as its candidate (multi-holder rows have no prefill),
+    -- so the award below records award-to-them. Unticked boxes stay
+    -- untouched; failed awards adopt nothing (scope first, award
+    -- second — but adoption only sticks when the award lands, see
+    -- Award's rememberChecked gate).
+    if nm and nm ~= "" and d.rememberChecked
+        and d.rememberMode == "award"
+        and (type(d.rememberName) ~= "string" or d.rememberName == "") then
+      d.rememberName = nm
+    end
     -- Loot-method guard (issue #18): same as "award" — a refused
     -- award must not pretend it landed (the old code always returned
     -- "awarded ..." even on failure). Reports honestly so the row,
@@ -1974,12 +2135,63 @@ function M.BuildDetailFrame()
     if M.detail then M.doAction(M.detail.itemID, "tieroll") end
   end)
   f.tierollB = tierollB
+  -- Remember checkbox in the top-right corner, left of the X: stores
+  -- this row's decision (raid-roll, or award to the shown candidate)
+  -- into the Setup Remembered list. One CheckButton (client template
+  -- when available, plain button fallback headless): checked =
+  -- remembered applies right now. Textless 20px box — the state line
+  -- under the header names what checking stores (see PaintDetailFrame).
+  local rememberB = nil
+  do
+    local okCB, cb = pcall(CreateFrame, "CheckButton", nil, f,
+      "UICheckButtonTemplate")
+    if not (okCB and type(cb) == "table"
+        and type(cb.SetChecked) == "function") then
+      okCB, cb = pcall(CreateFrame, "Button", nil, f)
+      if not (okCB and type(cb) == "table") then cb = nil end
+    end
+    if cb then
+      if cb.SetWidth then cb:SetWidth(20) end
+      if cb.SetHeight then cb:SetHeight(20) end
+      if cb.SetPoint then cb:SetPoint("TOPRIGHT", f, "TOPRIGHT", -26, -4) end
+      rememberB = cb
+      if cb.SetScript then
+        cb:SetScript("OnClick", function() M.ToggleRemember() end)
+      end
+      -- Tooltip names what ticking stores (bare box otherwise).
+      -- GameTooltip-guarded: headless/mock frames skip it.
+      if cb.SetScript and GameTooltip and GameTooltip.SetOwner then
+        local prevEnter = nil
+        if cb.GetScript then prevEnter = cb:GetScript("OnEnter") end
+        cb:SetScript("OnEnter", function()
+          if prevEnter then prevEnter() end
+          local okOwn = pcall(GameTooltip.SetOwner, GameTooltip,
+            cb, "ANCHOR_RIGHT")
+          if not okOwn then return end
+          pcall(GameTooltip.SetText, GameTooltip, "Remember", 1, 0.82, 0)
+          pcall(GameTooltip.AddLine, GameTooltip,
+            "Ticked: this handling is remembered:", 1, 1, 1, 1)
+          pcall(GameTooltip.AddLine, GameTooltip,
+            "raid-roll, or award to the shown player.", 1, 1, 1, 1)
+          pcall(GameTooltip.AddLine, GameTooltip,
+            "Untick to forget.", 1, 1, 1, 1)
+          pcall(GameTooltip.Show, GameTooltip)
+        end)
+        cb:SetScript("OnLeave", function()
+          pcall(GameTooltip.Hide, GameTooltip)
+        end)
+      end
+      if cb.SetHitRectInsets then
+        pcall(cb.SetHitRectInsets, cb, 0, 0, 0, 0)
+      end
+    end
+  end
+  f.rememberB = rememberB
   -- X in the top-right corner: close the window (ends any open roll).
   local closeB = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   closeB:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
   f.closeB = closeB
   -- Routed via OnCloseButton (named for tests) rather than inline.
-
   closeB:SetScript("OnClick", function() M.OnCloseButton() end)
   M.detailFrame = f
   return f
@@ -2219,6 +2431,22 @@ function M.PaintDetailFrame()
   local listH = M.ListHeight(frameH, barRows)
   if f.rollsL and f.rollsL.SetHeight then f.rollsL:SetHeight(listH) end
   if f.rollsR and f.rollsR.SetHeight then f.rollsR:SetHeight(listH) end
+  -- Remember checkbox: the TICK is the state (d.rememberChecked),
+  -- reconciled on every paint so re-drops, wipes and ... picks never
+  -- leave a stale tick. The tick arms the write; the store lands at
+  -- the next award/raid-roll finish (or immediately for single-holder
+  -- rows via ToggleRemember). zlRemember carries the box context for
+  -- tests (what ticking would store); the tooltip/line names it.
+  if f.rememberB then
+    local box = M.RememberBox()
+    local ticked = d.rememberChecked and true or false
+    if f.rememberB.SetChecked then
+      pcall(f.rememberB.SetChecked, f.rememberB, ticked and 1 or nil)
+    end
+    -- Mock frames (and text UIs) carry the tick on .checked instead.
+    f.rememberB.checked = ticked
+    f.rememberB.zlRemember = box
+  end
   -- Item icon follows the detail's item (mirrors the raider header).
   if f.dicon and f.dicon.SetTexture and d then
     local tex = nil

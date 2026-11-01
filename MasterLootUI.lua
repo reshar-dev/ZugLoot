@@ -17,6 +17,101 @@ Z.MasterLootUI = M
 M.roll = nil -- THE roll (or nil): { itemID, itemLink, mode, rolls, silent }
 M.lastRound = nil -- last FINISHED round stamp (see FinishRoll)
 
+-- Remembered item defaults (Setup "Remembered" section): per-item
+-- auto-action applied when the row opens. Stored in
+-- Z.DB.remembered = { [itemID] = { mode, name, link, updated } }.
+-- mode: "raidroll" (ML raid-rolls the item on open, Setup auto
+-- raid-roll for exactly this item) | "award" + name (direct-award
+-- to that player on open — lone-holder shortcut without the click).
+-- Item-keyed so re-drops of the same item re-apply; link/name are
+-- display caches (the id is the key, never the link text). Runtime
+-- only reads/writes through the helpers below — Setup renders and
+-- the detail checkbox + open-row hook call those, never the table.
+-- Nil-safe headless (falls back to a module table when Z.DB is nil).
+M._rememberedFallback = {}
+function M.RememberedStore()
+  if Z.DB then
+    if type(Z.DB.remembered) ~= "table" then Z.DB.remembered = {} end
+    return Z.DB.remembered
+  end
+  return M._rememberedFallback
+end
+-- Sorted entries for the Setup list: { itemID, mode, name, link,
+-- updated }. Sorted by itemID (stable, headless-testable). Pure over
+-- any store table (defaults to the live store).
+function M.RememberedList(store)
+  local src = store or M.RememberedStore()
+  local out = {}
+  for id, e in pairs(src or {}) do
+    local itemID = tonumber(id)
+    if itemID and type(e) == "table" and (e.mode == "raidroll"
+        or e.mode == "award") then
+      table.insert(out, { itemID = itemID, mode = e.mode,
+        name = e.name, link = e.link, updated = e.updated })
+    end
+  end
+  table.sort(out, function(a, b) return a.itemID < b.itemID end)
+  return out
+end
+function M.RememberedGet(itemID)
+  itemID = Z.Util and Z.Util.ItemID(itemID) or tonumber(itemID)
+  if not itemID then return nil end
+  local e = M.RememberedStore()[itemID]
+  if type(e) == "table"
+      and (e.mode == "raidroll" or e.mode == "award") then
+    return e
+  end
+  return nil
+end
+-- Remember/forget, called by the detail checkbox. remember=true stores
+-- { mode, name }; remember=false (or nil entry) drops the row.
+-- mode "award" REQUIRES a name (the assignee) — a nameless award
+-- remember refuses and keeps the old entry. Returns the stored entry
+-- or nil (forgotten / refused). mode "raidroll" ignores name.
+function M.RememberedSet(itemID, remember, mode, name, link)
+  itemID = Z.Util and Z.Util.ItemID(itemID) or tonumber(itemID)
+  if not itemID then return nil end
+  local store = M.RememberedStore()
+  if not remember then
+    store[itemID] = nil
+    return nil
+  end
+  if mode == "award" then
+    if type(name) ~= "string" or name == "" then return store[itemID] end
+  elseif mode ~= "raidroll" then
+    return store[itemID]
+  end
+  local e = { mode = mode, updated = (time and time()) or 0 }
+  if mode == "award" then e.name = name end
+  if link ~= nil then e.link = link end
+  store[itemID] = e
+  return e
+end
+-- Detail checkbox state: "raidroll" | "award" | nil (unchecked).
+-- An award entry whose stored name no longer matches the checkbox
+-- context reads as mismatch (unchecked) — the box reflects what it
+-- WOULD store, not a stale row. Pure, headless-testable.
+function M.RememberedBoxState(itemID, mode, name)
+  local e = M.RememberedGet(itemID)
+  if not e then return nil end
+  if e.mode ~= mode then return nil end
+  if mode == "award" then
+    if e.name ~= name then return nil end
+  end
+  return e.mode
+end
+-- Human line for the Setup textbox + checkbox tooltip:
+-- "Raid-roll on open" | "Award to <name> on open" | nil.
+-- Pure, headless-testable.
+function M.RememberedLine(entry)
+  if type(entry) ~= "table" then return nil end
+  if entry.mode == "raidroll" then return "Raid-roll on open" end
+  if entry.mode == "award" and entry.name and entry.name ~= "" then
+    return "Award to " .. tostring(entry.name) .. " on open"
+  end
+  return nil
+end
+
 -- The last FINISHED round, stamped by FinishRoll before the roll clears:
 -- { itemID, itemLink, mode, silent, roster, n }. Lets the award
 -- window "Continue rolling": reopen intake on the same item with the
@@ -697,8 +792,25 @@ function M.FinishRoll(itemID)
     local nm = winners[1].name
     local row = Z.LootWindow and Z.LootWindow.Find(roll.itemID) or nil
     local source = (row and row.source == "sim") and "sim" or "raid"
+    -- Remembered raid-roll: capture the tick BEFORE Award closes the
+    -- window (Award -> CloseDetail nils the detail first). A ticked
+    -- raid-roll finish (re)stores raid-roll, converging a pick-ticked
+    -- or mid-roll-armed tick onto the actual handling.
+    local wantRemember = false
+    if source ~= "sim" then
+      local d = Z.LootWindow and Z.LootWindow.detail or nil
+      wantRemember = d and d.itemID == roll.itemID and d.rememberChecked
+        and true or false
+    end
     local ok = M.Award(roll.itemID, nm, source)
-    if ok then return "awarded " .. tostring(nm) end
+    if ok then
+      -- Sim rolls never persist.
+      if wantRemember then
+        M.RememberedSet(roll.itemID, true, "raidroll", nil,
+          roll.itemLink)
+      end
+      return "awarded " .. tostring(nm)
+    end
     -- Handoff failed (non-candidate, walked away, dead call): the row
     -- and window stay up with the winner on it for a manual retry.
     local data = M.AwardMenu(roll.itemID, roll.itemLink, res)
@@ -1622,6 +1734,20 @@ function M.Award(itemID, winnerName, source, tradeTo)
   -- ZugLoot log, party in PARTY, raid in RAID. Verifiable: tests pin
   -- text + channel per grouping (tests/test_chat_routing.lua).
   M.AnnounceAward(itemID, link, winnerName, tradeTo, source == "sim")
+  -- Remembered award: the detail checkbox is ticked — the ticked
+  -- handling is remembered, so the next drop direct-awards to this
+  -- winner on open. Convergent: a ticked award always (re)stores its
+  -- outcome (a pick-ticked raid-roll becomes the actual award; untick
+  -- to stop remembering). Sim awards never persist (test queue only).
+  -- Silent no-API no-ops ("noslot" headless awards) still record —
+  -- the ML's decision is stored, not the corpse call.
+  if source ~= "sim" then
+    local d = Z.LootWindow and Z.LootWindow.detail or nil
+    if d and d.itemID == itemID and d.rememberChecked
+        and type(winnerName) == "string" and winnerName ~= "" then
+      M.RememberedSet(itemID, true, "award", winnerName, link)
+    end
+  end
   if Z.SRView then Z.SRView.Refresh() end
   if Z.LootWindow and Z.LootWindow.RemoveItem then Z.LootWindow.RemoveItem(itemID) end
   if Z.RaiderLootUI and Z.RaiderLootUI.Hide then Z.RaiderLootUI.Hide() end
@@ -2766,6 +2892,11 @@ function M.OnLootOpened()
         end
       end
     end
+    -- Remembered items (Setup Remembered list): per-item auto-action
+    -- on open — raid-roll the row, or direct-award it to the stored
+    -- player. First remembered match wins (one roll at a time); sim
+    -- rows never apply (no corpse, test-only queue).
+    M.ApplyRemembered()
     -- Sub-threshold auto-loot (issue #17, Setup option, default OFF):
     -- take free rows + coin straight off the corpse, no clicks needed.
     -- Group-roll rows are NEVER touched (Blizzard's Need/Greed owns
@@ -2775,6 +2906,37 @@ function M.OnLootOpened()
     -- OFF means hands off entirely. Rows drop on LOOT_SLOT_CLEARED.
     M.AutoLootFree()
   end
+end
+
+-- Remembered auto-action on open (Setup Remembered list). First
+-- remembered row wins: "raidroll" starts a raid roll (ML-only,
+-- same guards as the bar button); "award" direct-awards to the
+-- stored player (same guards as a manual award). Guards: ML only,
+-- no roll already running, corpse actually open, live rows only
+-- (sim rows never apply). Returns "raidroll" / "awarded <name>"
+-- / false. Headless-testable through the same stubs the bar paths
+-- use (lootOpen + AmML + roll state, no frame).
+function M.ApplyRemembered()
+  local items = Z.LootWindow and Z.LootWindow.items or {}
+  for i = 1, Z.Util.ArrayCount(items) do
+    local it = items[i]
+    if it and not it.coin and not it.ignored and it.source ~= "sim" then
+      local e = M.RememberedGet(it.itemID)
+      if e then
+        if e.mode == "raidroll" then
+          if M.StartRaidRoll and M.StartRaidRoll(it.itemID) then
+            return "raidroll"
+          end
+        elseif e.mode == "award" and e.name and e.name ~= "" then
+          if M.AwardDirect
+              and M.AwardDirect(it.itemID, e.name, "loot") then
+            return "awarded " .. tostring(e.name)
+          end
+        end
+      end
+    end
+  end
+  return false
 end
 
 -- Take every free row + coin off the open corpse (sub-threshold

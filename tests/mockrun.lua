@@ -200,6 +200,15 @@ assert(Z.LootWindow.detailFrame ~= nil, "detail frame built");
 assert(Z.LootWindow.detailFrame.ignoreB ~= nil, "Ignore button built");
 assert(Z.LootWindow.detailFrame.ignoreB.label == "Ignore", "Ignore labeled");
 assert(Z.LootWindow.detailFrame.ignoreB:GetScript("OnClick"), "Ignore click wired");
+-- remember checkbox: top-right (left of the X), tick persists via ToggleRemember.
+local remB = Z.LootWindow.detailFrame.rememberB;
+assert(remB ~= nil, "remember checkbox built");
+assert(remB:GetScript("OnClick"), "remember click wired");
+local hasTR = false;
+for _, p in ipairs(remB.points or {}) do
+  if p[1] == "TOPRIGHT" then hasTR = true end
+end
+assert(hasTR, "remember checkbox anchored top-right");
 assert(Z.LootWindow.detailFrame.sandB ~= nil, "Sand button built");
 assert(Z.LootWindow.detailFrame.sandB.label == "Sand", "Sand labeled");
 assert(Z.LootWindow.detailFrame.sandB:GetScript("OnClick"), "Sand click wired");
@@ -663,23 +672,24 @@ Z.DB.backToGroup = false;
 Z.MainWindow.SelectTab("setup");
 -- setup panels: sorted categories, one rounded gold panel each.
 local panels = Z.MainWindow.DebugSetupPanels();
-assert(panels ~= nil and #panels == 5, "five setup panels, got: " .. tostring(panels and #panels));
-local wantTitles = { "Rolling", "Looting", "Automation", "Area loot", "Danger zone" };
-for i = 1, 5 do
+assert(panels ~= nil and #panels == 6, "six setup panels, got: " .. tostring(panels and #panels));
+local wantTitles = { "Rolling", "Looting", "Automation", "Area loot", "Remembered", "Danger zone" };
+for i = 1, 6 do
   assert(panels[i].title == wantTitles[i], "panel " .. i .. " sorted: " .. tostring(panels[i].title));
 end
--- 2x2 grid: left runs Looting(2) + Danger zone(5), right runs
--- Rolling(1) + Automation(3) + Area loot(4). Columns top-align,
--- sections stack down.
+-- 2x2 grid: left runs Looting(2) + Area loot(4) + Remembered(5),
+-- right runs Rolling(1) + Automation(3) + Danger zone(6). Columns
+-- top-align, sections stack down.
 assert(panels[1].top == panels[2].top, "Rolling + Looting top-aligned");
 assert(panels[3].top < panels[1].top, "Automation under Rolling");
-assert(panels[4].top < panels[3].top, "Area loot under Automation");
-assert(panels[5].top < panels[2].top, "Danger zone under Looting");
+assert(panels[4].top < panels[2].top, "Area loot under Looting");
+assert(panels[5].top < panels[4].top, "Remembered under Area loot");
+assert(panels[6].top < panels[3].top, "Danger zone under Automation");
 -- ordering: each column stacks downward without overlap; the row
 -- height fits the deeper column. (Absolute heights vary by width —
 -- the auto-need grid goes two-across wider up and the timer row adds
 -- a row to Rolling — so pin the order, not hard numbers.)
-for i = 1, 5 do
+for i = 1, 6 do
   local pn = panels[i].panel;
   assert(pn ~= nil and pn.GetHeight ~= nil and pn:GetHeight() > 40, "panel " .. i .. " sized");
 end
@@ -800,6 +810,34 @@ assert(Z.DB.areaLoot.lootOnStop == false, "stop toggle flips the flag");
 stAL.areaLootCombat:GetScript("OnClick")();
 assert(Z.DB.areaLoot.lootInCombat == false, "combat toggle flips the flag");
 Z.DB.areaLoot = nil;
+-- remembered section: empty list shows the hint; store -> row + state
+-- textbox + remove; select row shows the remembered state below.
+Z.DB.remembered = nil;
+Z.MainWindow.SelectTab("setup");
+local stRem = Z.MainWindow.DebugSetupToggles();
+assert(stRem.rememberedRemoveBtn ~= nil, "remembered Remove built");
+assert(stRem.rememberedState ~= nil, "remembered state textbox built");
+assert(Z.MainWindow.rememberSel == nil, "no selection on empty list");
+assert(string.find(Z.MainWindow.RefreshRememberedState() or "", "select", 1, true) ~= nil,
+  "empty state shows the hint");
+Z.MasterLootUI.RememberedSet(19019, true, "raidroll", nil, "|cffa335ee|Hitem:19019:0:0:0|h[Thunderfury]|h|r");
+Z.MasterLootUI.RememberedSet(17063, true, "award", "Carbon", nil);
+Z.MainWindow.SelectTab("setup");
+local stRem2 = Z.MainWindow.DebugSetupToggles();
+assert(stRem2.rememberedRows ~= nil and #stRem2.rememberedRows == 2, "two remembered rows, got: " .. tostring(stRem2.rememberedRows and #stRem2.rememberedRows));
+assert(stRem2.rememberedRows[1].itemID == 17063, "rows sorted by itemID");
+-- select the first row: state textbox names the remembered state.
+stRem2.rememberedRows[1].row:GetScript("OnClick")();
+assert(Z.MainWindow.rememberSel == 17063, "row click selects the item");
+local stateTxt = Z.MainWindow.RefreshRememberedState();
+assert(string.find(stateTxt or "", "Carbon", 1, true) ~= nil, "state shows the assignee, got: " .. tostring(stateTxt));
+-- remove drops the selected entry and clears the selection.
+stRem2.rememberedRemoveBtn:GetScript("OnClick")();
+assert(Z.MasterLootUI.RememberedGet(17063) == nil, "remove forgets the entry");
+assert(Z.MainWindow.rememberSel == nil, "remove clears the selection");
+assert(Z.MasterLootUI.RememberedGet(19019) ~= nil, "other entry survives remove");
+Z.DB.remembered = nil;
+Z.MainWindow.rememberSel = nil;
 -- raider-frame policy toggle: ML (default) <-> ALL, label follows.
 Z.DB.raiderFrame = nil;
 Z.MainWindow.SelectTab("setup");

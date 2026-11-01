@@ -1454,8 +1454,8 @@ function M.RenderSetup()
   -- (No single button width anymore: duoW/fullButton derive from colW.)
   local y = -4 -- top of the two-column area (no header above it)
   local panels = {} -- debug hook: { title, panel, top } per section
-  -- 2x2 grid: left runs Looting + Danger zone, right runs Rolling +
-  -- Automation. One invisible wrapper (gridF) holds both columns so
+  -- 2x2 grid: left runs Looting + Area loot + Remembered, right runs
+  -- Rolling + Automation + Danger zone. One invisible wrapper (gridF) holds both columns so
   -- the pair moves as a unit. It is centered against the VISIBLE
   -- window — not the scroll body: the body (winW-64 at +14) leaves
   -- 14px chrome left but ~50px right (dead zone + scrollbar slot +
@@ -1906,16 +1906,16 @@ function M.RenderSetup()
     ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
   -- Section 4: Area loot — event-driven nearby-corpse looting,
-  -- imported from ../AutoAreaLoot. Right column, under Automation.
+  -- imported from ../AutoAreaLoot. Left column, under Looting.
   -- ClassicAPI DLL required: without C_Loot.LootAllCorpses the toggles
   -- persist but nothing ever scans (one-time warning, status line).
-  -- Left runs Looting + Danger zone, right runs Rolling + Automation +
-  -- Area loot; the pair wraps at the deeper column as before.
+  -- Left runs Looting + Area loot + Remembered, right runs Rolling +
+  -- Automation + Danger zone; the pair wraps at the deeper column as before.
   do
     local AL = Z.AreaLoot
     local contentH = BH + 8 + BH + 8 + BH + 8 + 21
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
     local head = FS(panel, "GameFontNormal", "Area loot")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -1980,16 +1980,168 @@ function M.RenderSetup()
     M.setupBtns.areaLootDeath = bDeath
     M.setupBtns.areaLootStop = bStop
     M.setupBtns.areaLootCombat = bCombat
-    table.insert(panels, { title = "Area loot", panel = panel, top = ry })
-    ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Area loot", panel = panel, top = ly })
+    ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
   end
-  -- Section 5: Danger zone — factory reset. Left column, under
-  -- Looting: left runs Looting + Danger, right runs Rolling +
-  -- Automation + Area loot — bottoms close, no dead space, no footer.
+
+  -- Section 5: Remembered — per-item auto-actions saved from the ML
+  -- roll window's top-right checkbox. List + Remove + state textbox.
+  -- Left column, under Area loot. Headless-safe: every frame op is
+  -- CreateFrame-probed like the rest of the tab (mock frames carry the
+  -- button/label/text hooks the tests assert).
+  do
+    -- M.rememberSel (selected itemID, session-only) is NOT cleared here:
+    -- RenderSetup runs on every Refresh, and wiping it would drop the
+    -- selection under any unrelated re-render. refreshRemembered drops
+    -- it only when its entry is gone.
+    -- Layout (top down): list rows from -PAD_TOP, then one band with
+    -- Remove (left cell) + state textbox (right cell). The band sits
+    -- BELOW the list, so refreshRemembered repositions both widgets
+    -- every render (list height varies with the entry count).
+    local ROW_H = 20
+    local MAX_ROWS = 8 -- list shows 8 rows; more stay stored, unlisted
+    local panel = M.SetupPanel(gridF, colW, PAD_TOP + ROW_H + 4 + SMALL_H + PAD_BOTTOM)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
+    local head = FS(panel, "GameFontNormal", "Remembered")
+    head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
+    if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
+    -- Remove button: drops the SELECTED entry from Z.DB.remembered.
+    -- Left cell of the below-list band (repositioned per render).
+    local remB = gridSingle(panel, -PAD_TOP - ROW_H - 4, SMALL_H)
+    remB:SetText("Remove")
+    remB:SetScript("OnClick", function()
+      local id = M.rememberSel
+      local MLUI = Z.MasterLootUI
+      if id and MLUI and MLUI.RememberedSet then
+        MLUI.RememberedSet(id, false)
+        M.rememberSel = nil
+        M.Refresh()
+      end
+    end)
+    Tip(remB, "Remove", "Forget the selected item's remembered decision.",
+      "The next drop rolls normally; tick the box again to re-remember.")
+    -- State textbox: the remembered state of the selected row (or the
+    -- empty hint). Right cell of the below-list band (repositioned per
+    -- render). Read-only; no Tip (FontStrings carry no GetScript — a
+    -- Tip would crash the render headless and in-game on bare labels).
+    local stateFS = FS(panel, "GameFontHighlightSmall", "(select an item)")
+    if stateFS.SetPoint then
+      stateFS:SetPoint("TOPLEFT", panel, "TOPLEFT",
+        PAD_SIDE + duoW + 8, -PAD_TOP - ROW_H - 4)
+    end
+    if stateFS.SetWidth then stateFS:SetWidth(duoW) end
+    if stateFS.SetJustifyH then stateFS:SetJustifyH("LEFT") end
+    M.setupBtns = M.setupBtns or {}
+    M.setupBtns.rememberedState = stateFS
+    M.setupBtns.rememberedRemoveBtn = remB
+    local function refreshRemembered()
+      local MLUI = Z.MasterLootUI
+      local list = (MLUI and MLUI.RememberedList and MLUI.RememberedList()) or {}
+      local n = Z.Util.ArrayCount(list)
+      -- Wipe old row widgets (rebuilt below).
+      if M.setupBtns.rememberedRows then
+        for i = 1, Z.Util.ArrayCount(M.setupBtns.rememberedRows) do
+          local rb = M.setupBtns.rememberedRows[i]
+          if rb and rb.row and rb.row.Hide then rb.row:Hide() end
+        end
+      end
+      M.setupBtns.rememberedRows = {}
+      if M.setupBtns.rememberedEmpty and M.setupBtns.rememberedEmpty.Hide then
+        M.setupBtns.rememberedEmpty:Hide()
+        M.setupBtns.rememberedEmpty = nil
+      end
+      if n == 0 then
+        local hint = FS(panel, "GameFontHighlightSmall",
+          "(nothing remembered — tick the box on a roll window)")
+        if hint.SetPoint then
+          hint:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -PAD_TOP)
+        end
+        if hint.SetWidth then hint:SetWidth(colW - PAD_SIDE * 2) end
+        if hint.SetJustifyH then hint:SetJustifyH("LEFT") end
+        M.setupBtns.rememberedEmpty = hint
+        M.rememberSel = nil
+      else
+        -- Selection survives refresh when its entry still exists.
+        local stillThere = false
+        for i = 1, n do
+          if list[i] and list[i].itemID == M.rememberSel then
+            stillThere = true break
+          end
+        end
+        if not stillThere then M.rememberSel = nil end
+        local shown = n
+        if shown > MAX_ROWS then shown = MAX_ROWS end
+        for i = 1, shown do
+          local e = list[i] -- fresh local per iteration for the closure
+          local itemID = e.itemID
+          local col = math.mod(i - 1, 2)
+          local rowY = -PAD_TOP - math.floor((i - 1) / 2) * (ROW_H + 4)
+          local selB = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+          selB:SetWidth(duoW) selB:SetHeight(ROW_H)
+          selB:SetPoint("TOPLEFT", panel, "TOPLEFT",
+            PAD_SIDE + col * (duoW + 8), rowY)
+          local function paintSel()
+            local label = M.RememberedItemLabel(e)
+            if selB.SetText then
+              if M.rememberSel == itemID then label = ">> " .. label end
+              selB:SetText(label)
+            end
+          end
+          paintSel()
+          selB:SetScript("OnClick", function()
+            if M.rememberSel == itemID then M.rememberSel = nil
+            else M.rememberSel = itemID end
+            M.RefreshRememberedState()
+            refreshRemembered()
+          end)
+          Tip(selB, "Remembered item", (MLUI and MLUI.RememberedLine
+            and MLUI.RememberedLine(e)) or tostring(e.mode),
+            "Click to show the remembered state below.")
+          M.setupBtns.rememberedRows[i] = { row = selB, itemID = itemID,
+            entry = e, paint = paintSel }
+        end
+      end
+      M.RefreshRememberedState()
+      -- Size to the list, then park the Remove + state band BELOW it:
+      -- list rows + 4px gap + one SMALL_H band. Capped at MAX_ROWS;
+      -- Refresh re-renders, so sizing here is enough (no live
+      -- insert/delete without a re-render). bandY is the shared row
+      -- top for remB (left cell) + stateFS (right cell).
+      local rows = n
+      if rows > MAX_ROWS then rows = MAX_ROWS end
+      local listH = ROW_H
+      if n > 0 then
+        listH = math.ceil(rows / 2) * (ROW_H + 4) - 4
+      end
+      local bandY = -PAD_TOP - listH - 4
+      if remB.ClearAllPoints then remB:ClearAllPoints() end
+      if remB.SetPoint then
+        remB:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, bandY)
+      end
+      if stateFS.ClearAllPoints then stateFS:ClearAllPoints() end
+      if stateFS.SetPoint then
+        stateFS:SetPoint("TOPLEFT", panel, "TOPLEFT",
+          PAD_SIDE + duoW + 8, bandY - 3)
+      end
+      if panel.SetHeight then
+        panel:SetHeight(PAD_TOP + listH + 4 + SMALL_H + PAD_BOTTOM)
+      end
+      return list
+    end
+    M.setupBtns.refreshRemembered = refreshRemembered
+    refreshRemembered()
+    table.insert(panels, { title = "Remembered", panel = panel, top = ly })
+    ly = ly - (panel.GetHeight and panel:GetHeight()
+      or (PAD_TOP + ROW_H + 4 + SMALL_H + PAD_BOTTOM)) - GAP
+  end
+  -- Section 6: Danger zone — factory reset. Right column, under
+  -- Automation: left runs Looting + Area loot + Remembered, right runs
+  -- Rolling + Automation + Danger zone — bottoms close, no dead space,
+  -- no footer.
   do
     local contentH = BH
     local panel = M.SetupPanel(gridF, colW, PAD_TOP + contentH + PAD_BOTTOM)
-    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", leftX, ly)
+    panel:SetPoint("TOPLEFT", gridF, "TOPLEFT", rightX, ry)
     local head = FS(panel, "GameFontNormal", "Danger zone")
     head:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_SIDE, -6)
     if head.SetTextColor then head:SetTextColor(PAL.gold[1], PAL.gold[2], PAL.gold[3]) end
@@ -2002,8 +2154,8 @@ function M.RenderSetup()
     Tip(b5, "Reset all settings",
       "Factory reset: sheet, raid history, drop log and all options back to defaults.",
       "Confirmation window first. Local data only — anyone can use it.")
-    table.insert(panels, { title = "Danger zone", panel = panel, top = ly })
-    ly = ly - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
+    table.insert(panels, { title = "Danger zone", panel = panel, top = ry })
+    ry = ry - (PAD_TOP + contentH + PAD_BOTTOM) - GAP
     -- gridF wraps the pair (Members pattern): height = deeper column.
     local bottomY = (ly < ry) and ly or ry
     gridF:SetHeight(-bottomY + GAP)
@@ -2080,6 +2232,69 @@ function M.DebugSliderState()
     out[key] = (b.sb and b.sb.IsVisible and b.sb:IsVisible()) and true or false
   end
   return out
+end
+
+-- Remembered section helpers (Setup tab, headless-testable):
+-- RememberedItemLabel(entry) -> short row label (readable name, never
+-- a bare item:id; trimmed to the duo-cell width, id kept in full);
+-- RefreshRememberedState() repaints the state textbox from the current
+-- selection (M.rememberSel) and returns its text.
+function M.RememberedItemLabel(e)
+  local nm = nil
+  if e and e.itemID then
+    nm = M.RememberedItemName(e.itemID, e.link)
+  end
+  nm = nm or ("item:" .. tostring(e and e.itemID))
+  if string.len(nm) > 18 then nm = string.sub(nm, 1, 17) .. "..." end
+  return nm
+end
+-- Readable name for a remembered entry: stored link text > LootWindow
+-- DisplayName off a synthetic row > GetItemInfo > bare item:id.
+-- Pure over the entry fields (never touches Z.DB), headless-testable.
+function M.RememberedItemName(itemID, link)
+  local s = tostring(link or "")
+  local nm = string.match(s, "%[(.-)%]")
+  if nm and nm ~= "" then return nm end
+  if Z.LootWindow and Z.LootWindow.DisplayName then
+    local row = { itemID = itemID, link = link }
+    local dn = Z.LootWindow.DisplayName(row)
+    if dn and dn ~= "" and dn ~= ("item:" .. tostring(itemID)) then
+      return dn
+    end
+  end
+  if GetItemInfo then
+    local ok, n = pcall(GetItemInfo, tonumber(itemID))
+    if ok and type(n) == "string" and n ~= "" then return n end
+  end
+  return nil
+end
+function M.RefreshRememberedState()
+  local sb = M.setupBtns or {}
+  local fs = sb.rememberedState
+  local text = "(select an item)"
+  local id = M.rememberSel
+  if id then
+    local MLUI = Z.MasterLootUI
+    local e = MLUI and MLUI.RememberedGet and MLUI.RememberedGet(id) or nil
+    if e and MLUI and MLUI.RememberedLine then
+      text = MLUI.RememberedLine(e)
+        or (M.RememberedItemLabel(e) .. ": " .. tostring(e.mode))
+    elseif e then
+      text = M.RememberedItemLabel(e) .. ": " .. tostring(e.mode)
+    else
+      text = "(select an item)"
+      M.rememberSel = nil -- entry gone: drop the stale selection
+    end
+  end
+  if fs and fs.SetText then fs:SetText(text) end
+  -- Repaint the row ticks (selected row shows ">> ").
+  if sb.rememberedRows then
+    for i = 1, Z.Util.ArrayCount(sb.rememberedRows) do
+      local rb = sb.rememberedRows[i]
+      if rb and rb.paint then rb.paint() end
+    end
+  end
+  return text
 end
 
 -- Test hook: live layout numbers. Guards the Lua-scoping rule above:
@@ -2177,23 +2392,6 @@ function M.DebugHeaderButtons()
 end
 
 -- Setup-tab toggle buttons (headless-testable): the auto loot-method
--- switching pair + the boss-threshold dropdown button + the announce
--- rarity dropdown button + the area-loot group + the raider-frame
--- policy button + the auto-raid-roll category buttons + the
--- sub-threshold auto-loot button.
--- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
--- areaLoot, areaLootDeath, areaLootStop, areaLootCombat, raiderFrame,
--- autoRaidRoll, autoLootBelow } (nil before first Setup render).
-function M.DebugSetupToggles()
-  local sb = M.setupBtns or {}
-  return { mlOnBoss = sb.mlOnBoss, backToGroup = sb.backToGroup,
-    bossThreshold = sb.bossThreshold, announceQuality = sb.announceQuality,
-    areaLoot = sb.areaLoot, areaLootDeath = sb.areaLootDeath,
-    areaLootStop = sb.areaLootStop, areaLootCombat = sb.areaLootCombat,
-    raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
-    autoLootBelow = sb.autoLootBelow }
-end
-
 -- Test hook: the setup-tab panels in display order
 -- ({ title, panel, top }), recorded at render time.
 function M.DebugSetupPanels()
@@ -2365,10 +2563,12 @@ end
 -- switching pair + the boss-threshold dropdown button + the announce
 -- rarity dropdown button + the area-loot group + the raider-frame
 -- policy button + the auto-raid-roll category buttons + the
--- sub-threshold auto-loot button + the roll-timer slider/readout.
+-- sub-threshold auto-loot button + the roll-timer slider/readout +
+-- the remembered list (rows, state textbox, Remove button).
 -- Returns { mlOnBoss, backToGroup, bossThreshold, announceQuality,
 -- areaLoot, areaLootDeath, areaLootStop, areaLootCombat, raiderFrame,
--- autoRaidRoll, autoLootBelow, rollSlider, rollReadout }
+-- autoRaidRoll, autoLootBelow, rollSlider, rollReadout,
+-- rememberedState, rememberedRows, rememberedRemoveBtn }
 -- (nil before first Setup render).
 function M.DebugSetupToggles()
   local sb = M.setupBtns or {}
@@ -2378,7 +2578,10 @@ function M.DebugSetupToggles()
     areaLootStop = sb.areaLootStop, areaLootCombat = sb.areaLootCombat,
     raiderFrame = sb.raiderFrame, autoRaidRoll = sb.autoRaidRoll,
     autoLootBelow = sb.autoLootBelow,
-    rollSlider = sb.rollSlider, rollReadout = sb.rollReadout }
+    rollSlider = sb.rollSlider, rollReadout = sb.rollReadout,
+    rememberedState = sb.rememberedState,
+    rememberedRows = sb.rememberedRows,
+    rememberedRemoveBtn = sb.rememberedRemoveBtn }
 end
 
 function M.Build()

@@ -103,6 +103,10 @@ function Z.InitDB()
   -- Sub-threshold corpse auto-loot (Setup tab): take free rows + coin
   -- straight off the corpse, no clicks. Absent = off.
   if ZugLootDB.autoLootBelow == nil then ZugLootDB.autoLootBelow = false end
+  -- Remembered item defaults (Setup "Remembered" section): per-item
+  -- auto-action applied when the row opens ({ [itemID] = { mode, name,
+  -- link, updated } }). SavedVariables; absent = nothing remembered.
+  if type(ZugLootDB.remembered) ~= "table" then ZugLootDB.remembered = {} end
   -- Area-loot engine (Setup "Area loot" group, ported from AutoAreaLoot):
   -- event-driven nearby-corpse looting via the ClassicAPI DLL.
   -- Defaults to OFF; death + stop triggers + combat looting default ON
@@ -189,6 +193,9 @@ function Z.DoResetAllSettings()
     if Z.LootWindow.Hide then Z.LootWindow.Hide() end
   end
   if Z.RaiderLootUI and Z.RaiderLootUI.Hide then Z.RaiderLootUI.Hide() end
+  -- Remembered selection: session-only (never persisted) — a reset
+  -- with a stale selection would point at a forgotten entry.
+  if Z.MainWindow then Z.MainWindow.rememberSel = nil end
   -- Area-loot walk state: a reset must never leave a corpse walk or
   -- pending scan behind (config kept — only runtime is dropped).
   if Z.AreaLoot and Z.AreaLoot.Shutdown then Z.AreaLoot.Shutdown() end

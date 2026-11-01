@@ -609,6 +609,35 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
   on, the ML is told all rollers are auto (the rolls themselves still
   arrive as normal `/roll` chat).
 
+### 4.5a Remembered items (`MasterLootUI.Remembered*`, Setup "Remembered")
+
+- Top-right checkbox on the ML roll window (left of the X): ticking it
+  remembers this row's decision per itemID (`Z.DB.remembered`, backfilled
+  by `InitDB`). Two decisions: **raid-roll** (the row raid-rolls on open)
+  or **award to a specific player** (the next drop direct-awards to them
+  on open, no roll started).
+- The checkbox always stores something real: ticking a bare row stores
+  raid-roll (the fallback); the decision otherwise resolves by phase
+  (pick = holder award, award window = top winner, raid-roll in progress
+  = raid-roll). A normal roll in progress only arms the tick; a `...`
+  award pick adopts its candidate. Unticking forgets and resets the row
+  to its live seed. Unticked awards, sim rows, and tied award windows
+  persist nothing; one live roll blocks the auto path; direct-awards
+  need the corpse open like manual awards.
+- The tick converges: any ticked handling (re)stores its outcome at
+  decision time (`Award` reads the tick; the raid-roll finish captures it
+  before `Award` closes the window) — a ticked award overwrites a stale
+  pick-tick with the actual winner. Untick to stop remembering.
+- Setup section (own category, left column under Area loot): the list
+  (two-across duo rows, item name or `item:id`, sorted by itemID, selected
+  row shows `>>`), a Remove button (drops the selected entry and clears
+  the selection), and a textbox below showing the selected row's state
+  (`Raid-roll on open` / `Award to <name> on open`) or the empty hint.
+  Selection is session-only (`M.rememberSel`, cleared by factory reset).
+- Pure data layer (`RememberedStore/List/Get/Set/BoxState/Line`) +
+  headless `RememberBox/ToggleRemember/doAction` paths.
+  Test: `tests/test_remembered.lua` (+ mockrun Setup + checkbox asserts).
+
 ### 4.5b Area loot (`AreaLoot.lua`)
 
 Event-driven automatic nearby-corpse looting, imported from
