@@ -636,6 +636,13 @@ missing-DLL warning, status line shows it).
   the queue. The chain's OWN window is exempt (pinned guid == live
   `lootKey`), so chaining to the next mob never reads its own window
   as foreign.
+- Focus pin carries the attack snapshot: melee swing (`IsCurrentAction`
+  on the slotted `Attack`) + ranged repeat (`IsAutoRepeatAction` on
+  the slotted auto-repeat) pinned at pin time, re-armed after the
+  target restore — start-only (`StartAttack` / `CastSpellNoToggle`)
+  where ClassicAPI proves start-only, guarded `UseAction` re-press
+  otherwise (liveness re-checked, so it can only start, never stop).
+  OFF/unslotted pins nothing; every exit path clears the snapshot.
 - Threshold chain (master-loot auto loot): `LootAllCorpses` can only
   take what the threshold lets it, and ClassicAPI only opens a window
   for a corpse it actually auto-looted — an all-threshold+ mob leaves

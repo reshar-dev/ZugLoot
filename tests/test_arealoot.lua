@@ -274,6 +274,168 @@ eq(#AL.state.thresholdQueue, 0, "shutdown drops the threshold queue")
 eq(AL.state.thresholdActive, nil, "shutdown drops the active corpse")
 eq(AL.state.thresholdSkipped.g, nil, "shutdown drops the ignore list")
 
+-- 11. Attack snapshot: pin stores melee swing + ranged repeat slots +
+-- states; restore re-arms what was running (start-only first), never
+-- starts what was off, clears on every exit path.
+AL.Shutdown()
+ZugLoot.DB.areaLoot = { enabled = true, lootOnDeath = true,
+  lootOnStop = true, lootInCombat = true }
+AL.state.initialized = true
+ZugLoot.MasterLootUI = nil
+ZugLoot.LootWindow = nil
+local meleeOn, rangedOn = false, false
+local startedMelee, startedRanged, usedAction = nil, nil, nil
+FocusUnit = function(u) _focusSet = true end
+UnitExists = function(u)
+  if u == "target" then return _targetExists ~= false end
+  if u == "focus" then return _focusSet and true or false end
+  return false
+end
+UnitIsDead = function(u)
+  if u == "target" then return _targetDead and true or false end
+  return false
+end
+UnitCanAttack = function() return true end
+UnitIsUnit = function() return false end
+IsAttackAction = function(s) return s == 12 end
+IsAutoRepeatAction = function(s)
+  if s == 24 then return rangedOn and true or nil end
+  return nil
+end
+IsCurrentAction = function(s)
+  if s == 12 then return meleeOn and true or nil end
+  return nil
+end
+GetActionText = function(s)
+  if s == 24 then return "Auto Shot" end
+  return nil
+end
+TargetUnit = function(u) _focusSet = true _targetExists = true _targetDead = false end
+ClearTarget = function() _targetExists = false end
+StartAttack = function() meleeOn = true startedMelee = true end
+CastSpellNoToggle = function(n) rangedOn = true startedRanged = n end
+UseAction = function(s)
+  usedAction = s
+  if s == 12 then meleeOn = true end
+  if s == 24 then rangedOn = true end
+end
+SpellIsTargeting = function() return false end
+UnitName = function(u)
+  if u == "focus" then return "Mob" end
+  return "SoloPlayer"
+end
+C_Loot = {
+  LootAllCorpses = function() return true end,
+  IsScanInProgress = function() return false end,
+  GetLastScanResults = function() return {} end,
+}
+GetTime = function() return 100 end
+-- Both running, both drop mid-walk: start-only re-arms, plain press
+-- never fires (would toggle OFF a live action).
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn, rangedOn = true, true
+startedMelee, startedRanged, usedAction = nil, nil, nil
+AL.RequestLoot("death")
+eq(AL.attackState and AL.attackState.slot, 12, "melee slot pinned")
+eq(AL.attackState and AL.attackState.on, true, "swinging pinned on")
+eq(AL.rangedState and AL.rangedState.slot, 24, "ranged slot pinned")
+eq(AL.rangedState and AL.rangedState.on, true, "repeating pinned on")
+meleeOn, rangedOn, _targetDead = false, false, true -- corpse target now
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+eq(startedMelee, true, "melee re-armed via StartAttack")
+eq(startedRanged, "Auto Shot", "ranged re-armed via CastSpellNoToggle")
+eq(usedAction, nil, "no plain press while start-only APIs work")
+ok(AL.attackState == nil and AL.rangedState == nil, "snapshot cleared after restore")
+-- Survivors need nothing: liveness re-check short-circuits.
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn, rangedOn = true, true
+startedMelee, startedRanged, usedAction = nil, nil, nil
+AL.RequestLoot("death")
+_targetDead = true
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+eq(startedMelee, nil, "live swing never re-pressed")
+eq(startedRanged, nil, "live repeat never re-pressed")
+eq(usedAction, nil, "no press for live actions")
+-- OFF stays OFF: nothing is ever started that was not running.
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn, rangedOn = false, false
+AL.RequestLoot("death")
+ok(AL.attackState ~= nil, "melee snapshot taken even when off")
+eq(AL.attackState.on, false, "melee pinned off")
+eq(AL.rangedState, nil, "ranged unslotted/off pins nothing")
+_targetDead = true
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+eq(startedMelee, nil, "stopped swing never started")
+eq(usedAction, nil, "off action never pressed")
+-- Stock client (no start-only APIs): guarded UseAction re-press.
+StartAttack, CastSpellNoToggle = nil, nil
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn, rangedOn = true, false
+IsAutoRepeatAction = function(s) return nil end -- ranged unslotted: skip
+AL.RequestLoot("death")
+meleeOn, _targetDead = false, true
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+eq(usedAction, 12, "stock client re-presses the dropped swing")
+-- Live target survives: snapshot clears, nothing re-arms.
+StartAttack = function() meleeOn = true startedMelee = true end
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn = true
+startedMelee, usedAction = nil, nil
+AL.RequestLoot("death")
+_targetDead = false -- target still alive
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+eq(startedMelee, nil, "live target re-arms nothing")
+ok(AL.attackState == nil, "snapshot cleared on live-target exit")
+-- Focus dead/missing: snapshot clears, corpse still released.
+_focusSet, _targetExists, _targetDead = nil, true, false
+meleeOn = true
+AL.RequestLoot("death")
+ok(AL.attackState ~= nil, "snapshot taken before walk")
+UnitIsDead = function(u) return true end -- focus dead too
+UnitExists = function(u)
+  if u == "target" then return true end
+  if u == "focus" then return true end
+  return false
+end
+AL.OnEvent("LOOT_SCAN_COMPLETED")
+ok(AL.attackState == nil, "snapshot cleared with dead focus")
+-- Stale snapshots never leak across walks: a pin that cannot pin
+-- (corpse target) clears instead of inheriting.
+AL.attackState = { slot = 12, on = true }
+AL.rangedState = { slot = 24, on = true }
+UnitIsDead = function(u)
+  if u == "target" then return true end -- corpse: cannot pin
+  return false
+end
+AL.state.lootWalkActive = false
+C_Loot.LootAllCorpses = function() return true end
+AL.RequestLoot("death") -- pin refuses the corpse; walk still runs
+ok(AL.attackState == nil and AL.rangedState == nil,
+  "un pinnable walk clears stale snapshot")
+-- Reset drops snapshots like every other walk field.
+AL.attackState = { slot = 12, on = true }
+AL.rangedState = { slot = 24, on = true }
+AL.Shutdown()
+ok(AL.attackState == nil and AL.rangedState == nil,
+  "shutdown drops attack snapshots")
+FocusUnit = nil
+UnitExists = nil
+UnitIsDead = nil
+UnitCanAttack = nil
+UnitIsUnit = nil
+IsAttackAction = nil
+IsAutoRepeatAction = nil
+IsCurrentAction = nil
+GetActionText = nil
+TargetUnit = nil
+ClearTarget = nil
+StartAttack = nil
+CastSpellNoToggle = nil
+UseAction = nil
+SpellIsTargeting = nil
+UnitName = function() return "SoloPlayer" end
+_focusSet, _targetExists, _targetDead = nil, nil, nil
+
 C_Loot = nil
 GetTime = nil
 GetUnitSpeed = nil

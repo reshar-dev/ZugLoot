@@ -186,6 +186,11 @@ function M.ResetRuntime()
   st.playerSpellcastStartedAt = nil
   st.playerReticleActive = false
   st.playerControlLost = false
+  -- Attack snapshots belong to the walk being torn down: a reset must
+  -- never leave a stale swing/shot snapshot for a later walk to act on
+  -- (the next pin overwrites anyway — this is belt-and-braces).
+  M.attackState = nil
+  M.rangedState = nil
   if type(CloseLoot) == "function" then pcall(CloseLoot) end
 end
 
@@ -274,18 +279,140 @@ local function SafeUnitIsUnit(a, b)
   return ok and same and true or false
 end
 
+-- Snapshot of the swing/shot state pinned alongside the focus target
+-- (see PinLiveTargetAsFocus): melee = IsCurrentAction on the slotted
+-- Attack action (nil when Attack sits on no bar — unknown, not off),
+-- ranged = IsAutoRepeatAction on the slotted auto-repeat action
+-- (Auto Shot / Shoot / Throw — same nil-when-unslotted rule).
+-- Slot + state both persist, so restore can re-check liveness before
+-- touching anything. Cleared on restore; never acted on stale data.
+M.attackState = nil
+M.rangedState = nil
+
+-- Find the bar slot of a predicate action (IsAttackAction /
+-- IsAutoRepeatAction shape: fn(slot) -> truthy). Full 1..172 scan;
+-- pcall-guarded per slot, nil when unslotted or API absent.
+local function FindActionSlot(pred)
+  if type(pred) ~= "function" then return nil end
+  for slot = 1, 172 do
+    local ok, hit = pcall(pred, slot)
+    if ok and hit then return slot end
+  end
+  return nil
+end
+
+local function SnapshotAttackState()
+  M.attackState = nil
+  M.rangedState = nil
+  local aSlot = FindActionSlot(IsAttackAction)
+  if aSlot and type(IsCurrentAction) == "function" then
+    local ok, swinging = pcall(IsCurrentAction, aSlot)
+    if ok then M.attackState = { slot = aSlot, on = swinging and true or false } end
+  end
+  local rSlot = FindActionSlot(IsAutoRepeatAction)
+  if rSlot and type(IsAutoRepeatAction) == "function" then
+    local ok, repeating = pcall(IsAutoRepeatAction, rSlot)
+    if ok then M.rangedState = { slot = rSlot, on = repeating and true or false } end
+  end
+end
+
+local function ClearAttackState()
+  M.attackState = nil
+  M.rangedState = nil
+end
+
+-- Re-arm one snapshot entry: start-only when the API proves it is
+-- start-only (ClassicAPI StartAttack / CastSpellNoToggle with the
+-- notoggle capability), plain UseAction re-press otherwise — which is
+-- itself state-guarded (IsCurrentAction/IsAutoRepeatAction re-check
+-- right before firing, so a state that flipped mid-walk re-arms and a
+-- live one is never toggled off). Nil-safe: any missing API skips.
+local function RearmAttackEntry(entry, isRanged)
+  if not entry or not entry.on then return false end
+  local slot = entry.slot
+  if type(slot) ~= "number" then return false end
+  local liveCheck = isRanged and IsAutoRepeatAction or IsCurrentAction
+  if type(liveCheck) ~= "function" then return false end
+  local okLive, live = pcall(liveCheck, slot)
+  if okLive and live then
+    DebugLog((isRanged and "Ranged" or "Melee")
+      .. " attack already running after loot walk; leaving it")
+    return true
+  end
+  if not isRanged and type(StartAttack) == "function" then
+    -- ClassicAPI start-only: no-op when already swinging, never stops.
+    local okStart = pcall(StartAttack)
+    if okStart then
+      DebugLog("Melee swing re-armed via StartAttack after loot walk")
+      return true
+    end
+  end
+  if isRanged and type(CastSpellNoToggle) == "function" then
+    -- ClassicAPI start-only repeat: no-op when already repeating and
+    -- never disrupts a different running auto-repeat.
+    local shot = (type(GetActionText) == "function"
+      and (function()
+        local okT, txt = pcall(GetActionText, slot)
+        if okT and type(txt) == "string" and txt ~= "" then return txt end
+        return nil
+      end)()) or "Auto Shot"
+    local okShot = pcall(CastSpellNoToggle, shot)
+    if okShot then
+      DebugLog("Ranged attack re-armed via CastSpellNoToggle(" .. shot
+        .. ") after loot walk")
+      return true
+    end
+  end
+  if type(UseAction) == "function" then
+    -- Plain re-press: only fires when the re-check above proved the
+    -- action is NOT running, so the toggle can only start, never stop.
+    -- checkCursor guard: a held/spell-targeting cursor must never be
+    -- clobbered by the re-press (1.12: checked via SpellIsTargeting).
+    if type(SpellIsTargeting) == "function" then
+      local okT, targeting = pcall(SpellIsTargeting)
+      if okT and targeting then
+        DebugLog("Attack re-arm skipped: spell targeting active")
+        return false
+      end
+    end
+    local okUse = pcall(UseAction, slot)
+    if okUse then
+      DebugLog((isRanged and "Ranged" or "Melee")
+        .. " attack re-armed via UseAction(" .. tostring(slot)
+        .. ") after loot walk")
+      return true
+    end
+  end
+  DebugLog((isRanged and "Ranged" or "Melee")
+    .. " attack re-arm unavailable (no usable API)")
+  return false
+end
+
 -- Pin the live target as focus before the walk, so the post-walk
 -- restore has something to return to even with no manual /focus.
 -- Never pins a corpse; only pins what the player can attack.
+-- Attack snapshot rides along: swinging/shooting state is pinned here
+-- and re-armed by RestoreFocusTargetAfterWalk. Cleared FIRST: a walk
+-- that cannot pin (no focus API, corpse target, unattackable) must
+-- never inherit a STALE snapshot from an earlier walk — without a fresh
+-- snapshot there is nothing to restore.
 local function PinLiveTargetAsFocus()
+  ClearAttackState()
   if type(FocusUnit) ~= "function" then return end
   if not SafeUnitExists("target") or SafeUnitIsDead("target") then return end
-  if SafeUnitIsUnit("target", "focus") then return end
+  if SafeUnitIsUnit("target", "focus") then
+    -- Focus already pinned from an earlier walk that never restored
+    -- (missed completion): refresh the attack snapshot anyway — the
+    -- swing/shot may have started after the first pin.
+    SnapshotAttackState()
+    return
+  end
   if type(UnitCanAttack) == "function" then
     local ok, attackable = pcall(UnitCanAttack, "player", "target")
     if not ok or not attackable then return end
   end
   pcall(FocusUnit, "target")
+  SnapshotAttackState()
   local name = SafeUnitName("focus")
   DebugLog("Pinned live target as focus before loot walk"
     .. (name and (": " .. name) or ""))
@@ -293,11 +420,17 @@ end
 
 local function RestoreFocusTargetAfterWalk()
   -- Never steal a live target the player chose (or that survived).
+  -- Attack state still clears: the snapshot belongs to THIS walk, and
+  -- a live target means the player (or the fight) owns the swing now.
   if SafeUnitExists("target") and not SafeUnitIsDead("target") then
+    ClearAttackState()
     return
   end
   -- Only the focus enemy is worth retargeting; anything else is a guess.
+  -- No focus: nothing to restore onto — drop the snapshot too (there
+  -- is no target to re-arm against).
   if not SafeUnitExists("focus") or SafeUnitIsDead("focus") then
+    ClearAttackState()
     if type(ClearTarget) == "function" and SafeUnitIsDead("target") then
       pcall(ClearTarget)
       DebugLog("Corpse target cleared after loot walk")
@@ -311,10 +444,16 @@ local function RestoreFocusTargetAfterWalk()
       local name = SafeUnitName("focus")
       DebugLog("Focus target restored after loot walk"
         .. (name and (": " .. name) or ""))
+      -- Re-arm what was running before the walk: melee swing and/or
+      -- ranged repeat. Each entry re-checks liveness first, so this
+      -- can only start, never stop.
+      RearmAttackEntry(M.attackState, false)
+      RearmAttackEntry(M.rangedState, true)
     else
       DebugLog("Focus target restore failed; leaving target as-is")
     end
   end
+  ClearAttackState()
 end
 
 local function GetUnitWorldPosition(unit)
@@ -1359,6 +1498,8 @@ function M.OnEvent(event, a1)
     st.playerSpellcastStartedAt = nil
     st.playerReticleActive = false
     st.playerControlLost = false
+    M.attackState = nil
+    M.rangedState = nil
     st.stopGraceTimer = nil
     st.lastStopLootRequestAt = nil
     st.lastStopPositionX = nil
