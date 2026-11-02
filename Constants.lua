@@ -1,7 +1,7 @@
 -- ZugLoot/Constants.lua
 -- Shared constants: version, comm prefix, roll caps, colors.
 ZugLoot = ZugLoot or {}
-ZugLoot.VERSION = "0.2.4"
+ZugLoot.VERSION = "0.3.0"
 ZugLoot.PREFIX = "ZugLoot"
 
 ZugLoot.Caps = {
