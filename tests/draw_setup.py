@@ -208,7 +208,7 @@ for title in TITLES:
             button(bx + col * (DUO_W + 8), by + rr * (SMALL_H + 4),
                    DUO_W, SMALL_H, "%s: OFF" % c)
         by += 3 * (SMALL_H + 4) - 4 + 8
-        button(bx, by, COL_W - 16, SMALL_H, "Auto-loot below: OFF")
+        button(bx, by, COL_W - 16, SMALL_H, "Auto-loot: OFF")
     elif title == "Danger zone":
         button(bx, by, COL_W - 16, BH, BUTTONS[title][0])
 

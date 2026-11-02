@@ -214,12 +214,16 @@ ok(ML.roll == nil, "ignore ends the roll")
 resetHarness()
 ok(not ML.SandDistribute(1001, "loot"), "non-sand id refused")
 -- Solo (no raid): roster falls back to self, tracked like anyone else.
+-- Real solo has no loot method at all (nil, never "master"), so the
+-- take goes straight through plain LootSlot like any free loot.
 raidNames = {}
 grouping = "solo"
+GetLootMethod = function() return nil end
 lootSlots = { { link = "item:19183:0:0:0", quality = 3, quantity = 1 } }
 ML.OnLootOpened()
 ok(ML.SandDistribute(SAND, "loot"), "solo distributes to self")
 eq(ZugLoot.DB.sand.SoloPlayer, 1, "solo self tracked")
+GetLootMethod = function() return "master" end
 raidNames = { "Aaa", "Bbb" }
 grouping = "raid"
 ML.lootOpen = false

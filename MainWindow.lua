@@ -1885,9 +1885,9 @@ function M.RenderSetup()
     local b12 = gridSingle(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
     local function alLabel()
       if Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow() then
-        return "Auto-loot below: ON"
+        return "Auto-loot: ON"
       end
-      return "Auto-loot below: OFF"
+      return "Auto-loot: OFF"
     end
     b12:SetText(alLabel())
     b12:SetScript("OnClick", function()
@@ -1897,8 +1897,8 @@ function M.RenderSetup()
       end
       b12:SetText(alLabel())
     end)
-    Tip(b12, "Auto-loot below threshold", "Take below-threshold corpse loot (free rows + coin) automatically, no clicks.",
-      "Group-roll items are never touched — Blizzard's Need/Greed owns those.")
+    Tip(b12, "Auto-loot", "Take everything allowed the moment the loot window opens (free rows + coin), no clicks.",
+      "Roll rows always stay for rolling. Group-roll items are never touched — Blizzard's Need/Greed owns those.")
     M.setupBtns = M.setupBtns or {}
     M.setupBtns.autoRaidRoll = nzBtns
     M.setupBtns.autoLootBelow = b12

@@ -147,12 +147,17 @@ function M.SetCombat(on)
 end
 
 -- Setup info line: API readiness + master state in one glance.
+-- Names the master-loot stand-down so the ML knows the walk is parked
+-- (corpses open for rolling instead) rather than broken.
 function M.StatusText()
   if not M.Available() then
     return "ClassicAPI missing — area looting disabled"
   end
-  if M.IsOn() then return "ClassicAPI: ready — Area loot: ON" end
-  return "ClassicAPI: ready — Area loot: OFF"
+  if not M.IsOn() then return "ClassicAPI: ready — Area loot: OFF" end
+  if M.IsMasterLoot() then
+    return "ClassicAPI: ready — Area loot: ON (master loot: opening for rolls)"
+  end
+  return "ClassicAPI: ready — Area loot: ON"
 end
 
 -- Clear runtime (walk, timers, pending, transient flags). Config kept.
@@ -521,20 +526,27 @@ function M.ManualLootOpen()
 end
 
 -- -- Threshold-leftovers follow-up chain ---------------------------------
--- Master-loot threshold rule (stock client behavior): LootAllCorpses can
--- only auto-take what the threshold lets it. Anything at/above
--- GetLootThreshold stays on the corpse — and ClassicAPI only OPENS a
--- window for a corpse it actually auto-looted. So after a walk, a mob
--- whose loot is ALL above threshold leaves NO window at all: without a
--- follow-up, that corpse is never shown and its roll never starts.
+-- Master-loot threshold rule (stock client behavior): plain takes
+-- (LootAllCorpses, LootSlot) can only move below-threshold loot.
+-- Anything at/above GetLootThreshold stays on the corpse — and the
+-- server refuses a plain take on it (the "stealing" error), so a mob
+-- whose loot is ALL above threshold leaves NO window at all unless
+-- its corpse is OPENED for rolling: without a follow-up, that corpse
+-- is never shown and its roll never starts.
 --
--- Fix: when a walk finishes and the scan says some corpse still holds
--- threshold+ loot, open THAT corpse directly via C_Loot.LootUnit(guid)
--- so MasterLootUI sees LOOT_OPENED and the ML can roll it. Then chain:
--- after the ML finishes the corpse (LOOT_CLOSED with no rows left, or
--- an ignored-only CloseIfFinished), open the NEXT queued guid — until
--- the queue drains or something the player ignores parks it.
--- (Ignored = parked: a guid the player explicitly ignored NEVER
+-- Fix, in two halves that never overlap (split by live loot method):
+-- * Master loot OFF: the area walk runs (LootAllCorpses auto-takes
+--   what the threshold lets it). After a walk, queue every corpse it
+--   touched; the chain opens each via C_Loot.LootUnit(guid) so
+--   MasterLootUI sees LOOT_OPENED and the ML can roll it.
+-- * Master loot ON: the area walk STANDS DOWN (RequestLoot defers —
+--   its plain takes would earn server "stealing" refusals instead
+--   of windows). The survey (SurveyMasterLoot) queues CURRENTLY
+--   lootable units instead; the same chain opens each for rolling.
+-- Then chain: after the ML finishes the corpse (LOOT_CLOSED with no
+-- rows left, or an ignored-only CloseIfFinished), open the NEXT queued
+-- guid — until the queue drains or something the player ignores parks
+-- it. (Ignored = parked: a guid the player explicitly ignored NEVER
 -- re-opens, this walk or any later one. Same for the corpse the
 -- player already has open — ManualLootOpen never fires into it.)
 --
@@ -672,11 +684,12 @@ function M.CompleteActiveLootWalk()
   else
     DebugLog("GetLastScanResults is unavailable")
   end
-  -- Headless note: tests stub GetLastScanResults + GetTime, but a lean
-  -- harness may stub results without a clock. The threshold chain only
-  -- needs the guids, never the settle math — queue whenever results
-  -- exist, settle only when the clock does.
-  if Z.Util.ArrayCount(results) > 0 then
+  -- Survey branch (see M.SurveyMasterLoot): under master loot the
+  -- engine never walks, so completion reads CURRENT lootable units
+  -- instead of the walk's touch-list. Non-master flow unchanged.
+  if M.SurveyMasterLoot() then
+    st.emptyScanStreak = 0
+  elseif Z.Util.ArrayCount(results) > 0 then
     if type(GetTime) == "function" then
       local settleDuration, latency = GetAdaptiveLootSettleDuration()
       st.settleUntil = GetTime() + settleDuration
@@ -789,6 +802,24 @@ function M.RequestLoot(source)
   end
   if not M.RequireAPI() then
     DebugLog("Loot request stopped: ClassicAPI loot API unavailable")
+    return false
+  end
+  -- Master-loot gate (see header): LootAllCorpses sends a plain take
+  -- per slot, so under master loot a threshold+ corpse earns a server
+  -- "stealing" refusal per item instead of a window — and the corpse
+  -- never opens for rolling. Never walk while master loot is live:
+  -- the survey (SurveyMasterLoot) + threshold chain own those corpses
+  -- instead (LootUnit opens them, MasterLootUI rolls them). Parked,
+  -- not dropped: when the method flips back, the queued request runs
+  -- the normal walk again.
+  if M.IsMasterLoot() then
+    QueuePendingLootRequest(source)
+    DebugLog("Loot request deferred: master loot is live — survey + threshold chain own these corpses")
+    -- Kick the survey NOW (the walk will never run under master loot,
+    -- so nothing else would: completion only fires after a walk).
+    -- Queued for the flip-back too: restoring group loot re-runs the
+    -- normal walk from the parked request.
+    M.SurveyMasterLoot()
     return false
   end
   if st.stopGraceTimer then
@@ -1108,6 +1139,57 @@ end
 -- local. Direct-local calls from ABOVE this line would nil-error.
 -- (M.CollectThresholdQueue is assigned here, so any call after load
 -- is safe regardless of source order.)
+-- Master-loot survey: under master loot the engine NEVER walks (its
+-- LootAllCorpses takes would earn server "stealing" refusals on
+-- threshold+ corpses instead of opening windows for rolling), so a
+-- completed walk has no touch-list to build the chain from. Survey
+-- CURRENT lootable units directly (GetNearbyLootableUnits is the
+-- rights-checked list: only corpses the server flagged lootable for
+-- us) and queue every guid the window doesn't already hold — the
+-- chain then opens each via LootUnit and MasterLootUI rolls it.
+-- Returns true when it ran (caller skips the walk-results branch),
+-- false when master loot is off, the API is absent, or the survey
+-- found nothing new (caller falls through to the normal branch).
+function M.SurveyMasterLoot()
+  if not M.IsOn() then return false end
+  if not M.IsMasterLoot() then return false end
+  if not (C_Loot and type(C_Loot.GetNearbyLootableUnits) == "function") then
+    return false
+  end
+  local okUnits, units = pcall(C_Loot.GetNearbyLootableUnits)
+  if not okUnits or type(units) ~= "table" then return false end
+  local MLUI = Z.MasterLootUI
+  local handledLive = nil
+  if MLUI then
+    handledLive = {}
+    if MLUI.lootKey then handledLive[MLUI.lootKey] = true end
+    if MLUI.corpseCache then
+      for key in pairs(MLUI.corpseCache) do handledLive[key] = true end
+    end
+  end
+  local st = M.state
+  local added = 0
+  for i = 1, Z.Util.ArrayCount(units) do
+    local u = units[i]
+    local guid = u and u.guid or nil
+    if type(guid) == "string" and guid ~= "" and guid ~= st.thresholdActive
+        and not (st.thresholdSkipped and st.thresholdSkipped[guid])
+        and not (handledLive and handledLive["guid:" .. guid])
+        and not M.IsGuidQueued(st.thresholdQueue, guid) then
+      st.thresholdQueue = st.thresholdQueue or {}
+      table.insert(st.thresholdQueue, { guid = guid })
+      added = added + 1
+    end
+  end
+  if added > 0 then
+    DebugLog("Master-loot survey queued " .. added .. " corpse(s)")
+    if not st.autoLootWindowOpen then
+      M.OpenNextThreshold()
+    end
+    return true
+  end
+  return false
+end
 
 -- Corpse already handled via our window: parked in the MasterLootUI
 -- corpse cache (ParkCorpse snapshots rows keyed by corpse key;
@@ -1134,12 +1216,35 @@ function M.CanLootUnit()
   return C_Loot ~= nil and type(C_Loot.LootUnit) == "function"
 end
 
+-- Live loot-method read (pure, nil-safe): "master" exactly when the
+-- client reports the master-loot method right now. Headless / stub
+-- MasterLootUI without the reader counts as NOT master (the chain
+-- and the walk both stay inert rather than guessing).
+function M.IsMasterLoot()
+  local MLUI = Z.MasterLootUI
+  if MLUI and MLUI.CurrentLootMethod then
+    local ok, method = pcall(MLUI.CurrentLootMethod)
+    if ok and method == "master" then return true end
+  end
+  return false
+end
+
 -- Open one corpse of the threshold chain. Returns true when the open
 -- call ISSUED (LOOT_OPENED will follow and MasterLootUI takes over).
 -- False drains nothing: the guid stays queued for the next trigger —
 -- EXCEPT refused guids (no API, manual window on a FOREIGN corpse,
 -- player busy), which mark skip so the chain advances past them
 -- instead of wedging on one unopenable mob.
+-- LootUnit only OPENS (same wire as right-clicking the corpse); it
+-- never takes, in ANY loot method — so the chain is safe under group
+-- loot, free-for-all, and master loot alike. (The area WALK is the
+-- method-sensitive half: its plain takes stand down under master.)
+-- DLL contract (src/loot/Unit.cpp): Script_LootUnit returns NOTHING
+-- (0 values; silent no-op when unresolvable) and raises a Lua error
+-- only on bad usage. So a fired call (pcall ok) means the request
+-- went out — an open EVENT proves it landed. Never read the (void)
+-- return as success/failure: that misreading parked/skipped every
+-- corpse and stalled the chain after the first open.
 function M.OpenNextThreshold()
   local st = M.state
   if not M.IsOn() then return false end
@@ -1191,18 +1296,22 @@ function M.OpenNextThreshold()
     end
   end
   DebugLog("Opening threshold corpse " .. tostring(guid))
-  local callOK, callResult = pcall(C_Loot.LootUnit, guid)
-  if callOK and callResult then
-    table.remove(st.thresholdQueue, 1)
-    st.thresholdActive = guid
-    if type(GetTime) == "function" then st.thresholdOpenedAt = GetTime() end
-    return true
+  -- Fire-and-confirm: the call itself never reports back (see contract
+  -- above), so a clean pcall means "request sent, awaiting LOOT_OPENED".
+  -- The guid LEAVES the queue now and pins thresholdActive: the open
+  -- event (or a later close / re-survey) is the confirmation. A Lua
+  -- error means malformed input, not a dead corpse — keep it queued
+  -- for the next trigger instead of parking a guid the DLL never saw.
+  local callOK, callErr = pcall(C_Loot.LootUnit, guid)
+  if not callOK then
+    DebugLog("LootUnit error for " .. tostring(guid) .. ": "
+      .. tostring(callErr) .. " (keeping it queued)")
+    return false
   end
-  DebugLog("LootUnit refused " .. tostring(guid) .. ": parking it")
-  st.thresholdSkipped = st.thresholdSkipped or {}
-  st.thresholdSkipped[guid] = true
   table.remove(st.thresholdQueue, 1)
-  return false
+  st.thresholdActive = guid
+  if type(GetTime) == "function" then st.thresholdOpenedAt = GetTime() end
+  return true
 end
 
 -- The chained corpse closed: advance. Finished (no rows left) or

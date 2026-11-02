@@ -674,16 +674,23 @@ missing-DLL warning, status line shows it).
   where ClassicAPI proves start-only, guarded `UseAction` re-press
   otherwise (liveness re-checked, so it can only start, never stop).
   OFF/unslotted pins nothing; every exit path clears the snapshot.
-- Threshold chain (master-loot auto loot): `LootAllCorpses` can only
-  take what the threshold lets it, and ClassicAPI only opens a window
-  for a corpse it actually auto-looted — an all-threshold+ mob leaves
-  NO window at all. After each walk, every touched guid queues and
-  opens in scan order via `C_Loot.LootUnit(guid)` so the ML can roll
-  each corpse; finishing a corpse (empty or ignored-only close-out)
-  advances to the next, walk-aways keep their corpse, and ignored
-  guids (existing `Ignore` + new `thresholdSkipped` list) never
+- Threshold chain (master-loot auto loot), split by live loot method:
+  `LootAllCorpses` sends a plain take per slot, so under master loot a
+  threshold+ corpse earns a server "stealing" refusal per item instead
+  of a window — the corpse never opens for rolling. So the area WALK
+  stands down while master loot is live (`RequestLoot` defers + parks
+  the request, issues nothing); the survey (`SurveyMasterLoot`) queues
+  CURRENTLY lootable units (`GetNearbyLootableUnits`, rights-checked)
+  instead. With master loot off, the walk runs and every corpse it
+  touched queues from the scan results. Either way the chain opens each
+  guid in order via `C_Loot.LootUnit(guid)` — open-only (same wire as
+  right-clicking), never a take, safe in any method — so the ML can
+  roll each corpse; finishing a corpse (empty or ignored-only
+  close-out) advances to the next, walk-aways keep their corpse, and
+  ignored guids (existing `Ignore` + new `thresholdSkipped` list) never
   re-open. Handled corpses (live `lootKey` + parked `corpseCache` —
   the same cache that answers "already rolled") never re-queue.
+  Method flip-back re-runs the parked request as a normal walk.
   LootUnit-absent DLLs drain the chain; `ResetRuntime` drops it.
 - Pure gates + injectable state are headless-testable (`M state`,
   stubbed `C_Loot`, `ZugLoot.Timer` driving); the client frame

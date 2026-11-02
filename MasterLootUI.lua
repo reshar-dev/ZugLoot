@@ -1415,10 +1415,19 @@ function M.LootCorpseSlot(link, itemID, winnerName, slotHint)
       local giveML = GiveMasterLoot or GiveMasterLootCandidate
       if not idx then
         if selfTake then
-          -- Not on the candidate list (or list unreadable): fall back
-          -- to the plain call rather than strand the row. pcall-guarded
-          -- below; a dead call un-dims via the watchdog.
-          if dbg then trace(dbgLine("MASTER-FALLBACK")) end
+          -- No candidate index for our own take (list unreadable, or
+          -- we are somehow not on it): do NOT fall through to the
+          -- plain call — under master loot a plain self-take is a
+          -- verified silent server-side no-op, so issuing it would
+          -- strand the row with no error and no retry path. Refuse
+          -- with the row kept, loudly, so the ML sees it and can
+          -- click-to-loot or re-loot. (Non-ML callers never reach
+          -- here as selfTake.)
+          if Z.Print then
+            local disp = M.DisplayItemLink and M.DisplayItemLink(itemID, link) or tostring(itemID)
+            Z.Print("Can't take " .. disp .. ": not on the master loot candidate list — left on the corpse.")
+          end
+          return false
         else
           if Z.Print then Z.Print("Can't award " .. ChatName(winnerName) .. ": not a loot candidate.") end
           return false
@@ -2897,13 +2906,15 @@ function M.OnLootOpened()
     -- player. First remembered match wins (one roll at a time); sim
     -- rows never apply (no corpse, test-only queue).
     M.ApplyRemembered()
-    -- Sub-threshold auto-loot (issue #17, Setup option, default OFF):
-    -- take free rows + coin straight off the corpse, no clicks needed.
-    -- Group-roll rows are NEVER touched (Blizzard's Need/Greed owns
-    -- them — auto-taking would steal the item out from under the roll).
-    -- Routing (master handoff vs plain LootSlot) + the BoP confirm run
-    -- through the shared LootCorpseSlot path; the takeover kill-switch
-    -- OFF means hands off entirely. Rows drop on LOOT_SLOT_CLEARED.
+    -- Corpse auto-loot (Setup option, default OFF): the moment the
+    -- window builds, take everything we are allowed to take — free
+    -- rows + coin straight off the corpse, no clicks needed. Roll rows
+    -- ALWAYS stay (they need a roll or an award first); group-roll rows
+    -- are NEVER touched (Blizzard's Need/Greed owns them — auto-taking
+    -- would steal the item out from under the roll). Routing (master
+    -- handoff vs plain LootSlot) + the BoP confirm run through the
+    -- shared LootCorpseSlot path; the takeover kill-switch OFF means
+    -- hands off entirely. Rows drop on LOOT_SLOT_CLEARED.
     M.AutoLootFree()
   end
 end
@@ -2911,11 +2922,11 @@ end
 -- Remembered auto-action on open (Setup Remembered list). First
 -- remembered row wins: "raidroll" starts a raid roll (ML-only,
 -- same guards as the bar button); "award" direct-awards to the
--- stored player (same guards as a manual award). Guards: ML only,
--- no roll already running, corpse actually open, live rows only
--- (sim rows never apply). Returns "raidroll" / "awarded <name>"
--- / false. Headless-testable through the same stubs the bar paths
--- use (lootOpen + AmML + roll state, no frame).
+-- stored player (same guards as a manual award). Guards: no roll
+-- already running, corpse actually open, live rows only (sim rows
+-- never apply). Returns "raidroll" / "awarded <name>" / false.
+-- Headless-testable through the same stubs the bar paths use
+-- (lootOpen + roll state, no frame).
 function M.ApplyRemembered()
   local items = Z.LootWindow and Z.LootWindow.items or {}
   for i = 1, Z.Util.ArrayCount(items) do
@@ -2939,9 +2950,18 @@ function M.ApplyRemembered()
   return false
 end
 
--- Take every free row + coin off the open corpse (sub-threshold
--- auto-loot). Pure selection via FreeRowsForAutoLoot; guarded here:
--- option on, corpse open, takeover armed, winner = self.
+-- Take every lootable row off the open corpse (corpse auto-loot).
+-- WHAT it takes is pure selection (FreeRowsForAutoLoot): coin +
+-- below-threshold free rows only. Roll rows always stay: they need a
+-- roll or an award first, auto-loot can never decide them. Group-roll
+-- rows always stay: Blizzard's Need/Greed frames own them. Guarded
+-- here: option on, corpse open, takeover armed, winner = self.
+-- No ML gate: free loot is takeable by anyone (below threshold means
+-- the server lets any looter take it — that's what the threshold
+-- MEANS), and LootCorpseSlot routes each take correctly per method:
+-- ML self-takes go through the master handoff, everyone else (solo,
+-- raiders, non-ML clients) takes straight via LootSlot. A refused
+-- take (locked, full bags, range) leaves the row up for retry.
 function M.AutoLootFree()
   if not (Z.AutoRoll and Z.AutoRoll.AutoLootBelow and Z.AutoRoll.AutoLootBelow()) then return 0 end
   if not M.lootOpen then return 0 end
@@ -2955,14 +2975,32 @@ function M.AutoLootFree()
     local r = rows[i]
     if r and r.slot and M.LootCorpseSlot then
       local ok = M.LootCorpseSlot(r.link or ("item:" .. tostring(r.itemID)), r.itemID, me, r.slot)
-      if ok == true then n = n + 1 end
+      if ok == true then
+        n = n + 1
+        -- Mirror manual click-to-loot: dim the row and arm the
+        -- watchdog so a silent server drop un-dims it with a retry
+        -- hint instead of stranding a grey row. Disarmed by confirm
+        -- (RescanLeftovers clears arms) or error (UI_ERROR_MESSAGE).
+        -- Without this, an issued-but-ignored take looks exactly like
+        -- "nothing happened" — the reported ghost.
+        if Z.LootWindow and Z.LootWindow.MarkDone then
+          Z.LootWindow.MarkDone(r.itemID)
+        end
+        if Z.LootWindow and Z.LootWindow.WatchClick then
+          local nm = nil
+          if Z.LootWindow.DisplayName then nm = Z.LootWindow.DisplayName(r) end
+          Z.LootWindow.WatchClick(r.slot, r.itemID, nm or tostring(r.itemID))
+        end
+      end
     end
   end
   return n
 end
--- Selectable auto-loot rows: free rows + coin with a tracked corpse
--- slot. Group-roll rows excluded (Blizzard owns them), ignored rows
--- excluded (manual handling). Pure, headless-testable.
+-- Selectable auto-loot rows: coin + below-threshold free rows with a
+-- tracked corpse slot. Roll rows excluded (they need a roll/award
+-- first — nothing auto-decides them). Group-roll rows excluded
+-- (Blizzard owns them), ignored rows excluded (manual handling).
+-- Pure, headless-testable.
 function M.FreeRowsForAutoLoot(items)
   local out = {}
   for i = 1, Z.Util.ArrayCount(items or {}) do

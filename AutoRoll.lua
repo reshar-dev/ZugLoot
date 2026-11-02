@@ -2,7 +2,8 @@
 -- Per-character auto-roll for SR'd items + per-category auto
 -- RAID-ROLL for trash (ZG coins/bijous, MC mats, AQ scarabs/idols,
 -- Corrupted Sand, Dream shards, Naxx scraps, Necrotic Runes) +
--- sub-threshold corpse auto-loot. This addon is master-loot only:
+-- corpse auto-loot (free rows + coin the moment the window opens).
+-- This addon is master-loot only:
 -- there are no group-roll votes here, so each trash category is
 -- either OFF or auto raid-rolled by the ML when the corpse opens.
 -- All off by default; every category toggles OFF <-> RAID-ROLL
@@ -180,7 +181,11 @@ function M.MaybeAutoRaidRoll(itemID)
   if roll then return true end
   return nil
 end
--- Sub-threshold auto-loot master switch (Setup tab). Default OFF.
+-- Corpse auto-loot master switch (Setup tab). Default OFF.
+-- ON = take everything we are allowed to take the moment the loot
+-- window builds: free rows + coin straight off the corpse (loot
+-- threshold and below, never the group-roll rows Blizzard owns).
+-- Roll rows always stay: they need a roll or an award first.
 function M.AutoLootBelow()
   return Z.DB and Z.DB.autoLootBelow and true or false
 end

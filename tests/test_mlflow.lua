@@ -981,6 +981,135 @@ ZugLoot.DB.autoLootBelow = true
 ML.lootOpen = false
 eq(ML.AutoLootFree(), 0, "closed corpse takes nothing")
 ZugLoot.DB.autoLootBelow = nil
+-- 17b. On-open behavior: with the option ON, opening the window takes
+-- everything allowed (coin + free rows) and leaves roll rows listed;
+-- with it OFF nothing moves. Group-roll rows are never taken.
+resetHarness()
+GetLootMethod = function() return "freeforall" end
+local took = {}
+LootSlot = function(slot, force) table.insert(took, slot) return true end
+local autoBelow = true
+ZugLoot.AutoRoll = { AutoLootBelow = function() return autoBelow end }
+ZugLoot.DB.autoLootBelow = true
+lootSlots = {
+  { link = "item:6001:0:0:0", quality = 4 }, -- roll row: stays
+  { link = "item:6002:0:0:0", quality = 0 }, -- free row: taken
+}
+ML.OnLootOpened()
+eq(#took, 1, "open takes the one free row")
+ok(LW.Find(6001) ~= nil, "roll row stays listed")
+ok(LW.Find(6002) ~= nil, "taken row still listed pre-confirm (drops on LOOT_SLOT_CLEARED)")
+-- Group-loot method: the at-threshold row becomes Blizzard's, never taken.
+resetHarness()
+took = {}
+grouping = "party"
+ZugLoot.SRSecurity.IsSolo = function() return false end
+ZugLoot.SRSecurity.IsInGroup = function() return true end
+GetLootMethod = function() return "group" end
+autoBelow = true
+ZugLoot.DB.autoLootBelow = true
+ZugLoot.DB.sheet = makeSheet()
+lootSlots = {
+  { link = "item:6001:0:0:0", quality = 4 }, -- group row: never taken
+  { link = "item:6002:0:0:0", quality = 0 }, -- free row: taken
+}
+ML.OnLootOpened()
+eq(#took, 1, "group loot: only the free row taken")
+ok(LW.Find(6001) ~= nil and LW.Find(6001).group, "group row listed, owned by Blizzard")
+-- Option OFF: opening takes nothing at all.
+resetHarness()
+took = {}
+GetLootMethod = function() return "freeforall" end
+autoBelow = false
+ZugLoot.DB.autoLootBelow = false
+lootSlots = {
+  { link = "item:6001:0:0:0", quality = 4 },
+  { link = "item:6002:0:0:0", quality = 0 },
+}
+ML.OnLootOpened()
+eq(#took, 0, "option off: open takes nothing")
+eq(#LW.items, 2, "option off: everything stays listed")
+LootSlot = nil
+GetLootMethod = nil
+ZugLoot.AutoRoll = nil
+grouping = "solo"
+ZugLoot.SRSecurity.IsSolo = function() return grouping == "solo" end
+ZugLoot.SRSecurity.IsInGroup = function() return grouping ~= "solo" end
+ZugLoot.DB.autoLootBelow = nil
+-- 17c. Master-loot open: ML self-take goes through the handoff with
+-- the ML's own candidate index (plain LootSlot is a silent server
+-- no-op here); a handoff with no usable candidate index refuses
+-- loudly with the row kept instead of stranding on a dead call.
+resetHarness()
+took = {}
+local handed = {}
+LootSlot = function(slot, force) table.insert(took, slot) return true end
+GiveMasterLoot = function(slot, idx) table.insert(handed, { slot, idx }) return true end
+GetMasterLootCandidate = function(slot, i)
+  if i == 1 then return "SoloPlayer" end
+  return nil
+end
+GetLootMethod = function() return "master" end
+autoBelow = true
+ZugLoot.AutoRoll = { AutoLootBelow = function() return autoBelow end }
+ZugLoot.DB.autoLootBelow = true
+lootSlots = {
+  { link = "item:6003:0:0:0", quality = 4 }, -- roll row: stays for rolling
+  { link = "item:6004:0:0:0", quality = 0 }, -- grey: handoff-taken
+}
+ML.OnLootOpened()
+eq(#took, 0, "master loot: no dead plain LootSlot")
+eq(#handed, 1, "master loot: one handoff issued")
+eq(handed[1][2], 1, "master loot: own candidate index")
+ok(LW.Find(6003) ~= nil, "roll row stays listed")
+ok(LW.Find(6004) ~= nil, "taken row still listed pre-confirm")
+-- Candidate list unreadable: refuse loudly, keep the row, no call.
+GetMasterLootCandidate = function(slot, i) return nil end
+took, handed = {}, {}
+ML.lootOpen = true
+printed = {}
+lootSlots = {
+  { link = "item:6005:0:0:0", quality = 0 }, -- grey, no candidate entry
+}
+ML.OnLootOpened()
+eq(#took, 0, "no candidate: no dead plain call")
+eq(#handed, 0, "no candidate: no handoff issued")
+ok(LW.Find(6005) ~= nil, "no candidate: row kept for retry")
+local warned = false
+for i = 1, #printed do
+  if string.find(printed[i], "not on the master loot candidate list", 1, true) then warned = true end
+end
+ok(warned, "no candidate: refusal surfaced, not silent")
+LootSlot = nil
+GetLootMethod = nil
+GiveMasterLoot = nil
+GetMasterLootCandidate = nil
+ZugLoot.AutoRoll = nil
+ZugLoot.DB.autoLootBelow = nil
+-- 17d. Auto-loot marks taken rows done + arms the watchdog: a
+-- silently ignored take un-dims with a retry hint instead of
+-- stranding grey rows; a confirm drops the row via rescan.
+resetHarness()
+took = {}
+LootSlot = function(slot, force) table.insert(took, slot) return true end
+GetLootMethod = function() return "freeforall" end
+autoBelow = true
+ZugLoot.AutoRoll = { AutoLootBelow = function() return autoBelow end }
+ZugLoot.DB.autoLootBelow = true
+lootSlots = {
+  { link = "item:6006:0:0:0", quality = 0 }, -- grey: taken
+}
+ML.OnLootOpened()
+eq(LW.Find(6006).status, "done", "taken row dims")
+eq(#took, 1, "take issued")
+-- Confirm arrives: rescan drops the taken row.
+table.remove(lootSlots, 1)
+LW.OnEvent("LOOT_SLOT_CLEARED")
+eq(LW.Find(6006), nil, "confirmed row drops")
+LootSlot = nil
+GetLootMethod = nil
+ZugLoot.AutoRoll = nil
+ZugLoot.DB.autoLootBelow = nil
 -- 19. Own auto-switch never trips the guard (false-positive hunt):
 -- trash scanned under group, OUR boss switch to master, roll must
 -- start; flip-back restamps; a REAL external flip still refuses.

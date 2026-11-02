@@ -153,6 +153,92 @@ ok(string.find(AL.StatusText(), "ON", 1, true) ~= nil, "status shows ON")
 AL.SetEnabled(false)
 ok(string.find(AL.StatusText(), "OFF", 1, true) ~= nil, "status shows OFF")
 
+-- 9b. Master-loot gate: the walk stands down (its plain takes would
+-- earn server "stealing" refusals on threshold+ corpses); the survey
+-- + chain own those corpses instead. Request defers + queues AND kicks
+-- the survey immediately; method flip-back re-runs the parked walk.
+AL.Shutdown()
+ZugLoot.DB.areaLoot = { enabled = true, lootOnDeath = true,
+  lootOnStop = true, lootInCombat = true }
+AL.state.initialized = true
+ZugLoot.MasterLootUI = {
+  lootOpen = false, lootKey = nil, corpseCache = {},
+  CurrentLootMethod = function() return "master" end,
+}
+ZugLoot.LootWindow = nil
+scans = 0
+C_Loot = {
+  LootAllCorpses = function() scans = scans + 1 return true end,
+  IsScanInProgress = function() return false end,
+  GetNearbyLootableUnits = function()
+    return { { guid = "guid-M1" }, { guid = "guid-M2" } }
+  end,
+  LootUnit = function(guid) table.insert(opened, guid) end,
+}
+opened = {}
+AL.state.pendingLootReason = nil
+AL.state.thresholdQueue = {}
+AL.state.thresholdSkipped = {}
+AL.state.thresholdActive = nil
+eq(AL.IsMasterLoot(), true, "master method reads master")
+eq(AL.RequestLoot("death"), false, "master: walk refused")
+eq(scans, 0, "master: no walk issued (no stealing attempts)")
+eq(AL.state.pendingLootReason, "death", "master: request parked for flip-back")
+eq(#AL.state.thresholdQueue, 1, "master: second unit stays queued")
+eq(opened[1], "guid-M1", "master: survey opened the first corpse")
+eq(AL.state.thresholdActive, "guid-M1", "master: chain pinned")
+-- Method flips back to group: the parked request re-runs the walk.
+ZugLoot.MasterLootUI.CurrentLootMethod = function() return "group" end
+ok(not AL.IsMasterLoot(), "group method reads non-master")
+AL.state.lootWalkActive = false
+AL.state.thresholdActive = nil -- chain idle: closed window re-services
+scans = 0
+AL.OnEvent("LOOT_CLOSED") -- closed window re-services the queue
+eq(AL.state.lootRequestTimer ~= nil, true,
+  "flip-back: parked death request scheduled into a walk")
+ZugLoot.Timer.CancelAll()
+-- Survey skip-logic: queued, skipped, active, and window-held guids
+-- never re-queue; only the fresh corpse opens. StatusText names the
+-- master-loot stand-down. (Flip-back section above left group live;
+-- put master back for this block.)
+ZugLoot.MasterLootUI.CurrentLootMethod = function() return "master" end
+ok(string.find(AL.StatusText(), "opening for rolls", 1, true) ~= nil,
+  "status names the master stand-down")
+C_Loot.GetNearbyLootableUnits = function()
+  return { { guid = "guid-M1" }, -- active: skip
+    { guid = "guid-M2" }, -- queued: skip
+    { guid = "guid-M3" }, -- skipped: skip
+    { guid = "guid-M4" }, -- window-held: skip
+    { guid = "guid-M5" } } -- fresh: queue
+end
+AL.state.thresholdActive = "guid-M1"
+AL.state.thresholdQueue = { { guid = "guid-M2" } }
+AL.state.thresholdSkipped = { ["guid-M3"] = true }
+ZugLoot.MasterLootUI.corpseCache = { ["guid:guid-M4"] = true }
+opened = {}
+eq(AL.SurveyMasterLoot(), true, "survey ran with a fresh corpse")
+eq(#AL.state.thresholdQueue, 1, "survey appended only the fresh guid")
+eq(AL.state.thresholdQueue[1].guid, "guid-M5", "fresh guid appended")
+eq(opened[1], "guid-M2", "head-first: oldest queued corpse opens first")
+eq(AL.state.thresholdActive, "guid-M2", "chain pinned to the opened corpse")
+-- Everything covered (active + skipped + handled + queued): quiet.
+C_Loot.GetNearbyLootableUnits = function()
+  return { { guid = "guid-M2" }, { guid = "guid-M3" },
+    { guid = "guid-M4" }, { guid = "guid-M5" } }
+end
+eq(AL.SurveyMasterLoot(), false, "survey quiet when nothing new")
+AL.state.thresholdActive = nil
+ZugLoot.MasterLootUI.corpseCache = {}
+-- Non-master survey absence: without the survey API the walk path is
+-- untouched (results queue + open as before).
+ZugLoot.MasterLootUI.CurrentLootMethod = function() return "group" end
+C_Loot.GetNearbyLootableUnits = nil
+AL.state.thresholdActive = nil
+AL.Shutdown()
+AL.state.initialized = true
+ZugLoot.DB.areaLoot = { enabled = true, lootOnDeath = true,
+  lootOnStop = true, lootInCombat = true }
+
 -- 10. Threshold chain: above-threshold corpses get their own window.
 -- Master loot leaves threshold+ items on the corpse, so a walk that
 -- touched a corpse but took nothing leaves no window at all — the
@@ -169,7 +255,9 @@ local opened = {}
 C_Loot = {
   LootAllCorpses = function() return true end,
   IsScanInProgress = function() return false end,
-  LootUnit = function(guid) table.insert(opened, guid) return true end,
+  -- Real DLL contract (src/loot/Unit.cpp): the call returns NOTHING
+  -- (fires LOOT_OPENED async); only a Lua error means failure.
+  LootUnit = function(guid) table.insert(opened, guid) end,
   GetLastScanResults = function()
     return { { guid = "guid-A", items = {} }, { guid = "guid-B", items = {} } }
   end,
@@ -179,7 +267,7 @@ GetTime = function() return 100 end
 C_Loot.LootUnit = nil
 ok(not AL.CanLootUnit(), "no LootUnit: probe false")
 eq(AL.OpenNextThreshold(), false, "no LootUnit: nothing opens")
-C_Loot.LootUnit = function(guid) table.insert(opened, guid) return true end
+C_Loot.LootUnit = function(guid) table.insert(opened, guid) end
 ok(AL.CanLootUnit(), "LootUnit present: probe true")
 -- Pure queue collection: dedupe + skip ignored + skip active.
 AL.state.thresholdActive = "guid-B"
@@ -236,6 +324,32 @@ ZugLoot.MasterLootUI = { lootOpen = true, lootKey = "guid:g-A",
 local q3 = AL.CollectThresholdQueue({ { guid = "g-A" } }, {},
   { ["guid:g-A"] = true })
 eq(#q3, 0, "cached corpse never re-queues")
+-- DLL contract regression: C_Loot.LootUnit returns NOTHING (fires
+-- LOOT_OPENED async; src/loot/Unit.cpp). The chain must treat a clean
+-- pcall as "request sent", not as a refusal — the old
+-- `if callOK and callResult` check parked/skipped every corpse, so
+-- stop-then-stand-still opened nothing after the first guid.
+ZugLoot.MasterLootUI = nil
+ZugLoot.LootWindow = nil
+AL.state.thresholdActive = nil
+AL.state.thresholdSkipped = {}
+AL.state.thresholdQueue = { { guid = "guid-V" } }
+C_Loot.LootUnit = function(guid) table.insert(opened, guid) end -- void, like the DLL
+opened = {}
+eq(AL.OpenNextThreshold(), true, "void LootUnit return still counts as sent")
+eq(opened[1], "guid-V", "void-call guid opened")
+eq(AL.state.thresholdActive, "guid-V", "void-call guid pinned active")
+eq(#AL.state.thresholdQueue, 0, "void-call guid dequeued")
+eq(AL.state.thresholdSkipped["guid-V"], nil, "void-call guid never parked")
+-- A Lua error (bad arg) keeps the guid queued for the next trigger.
+C_Loot.LootUnit = function(guid) error("bad guid") end
+AL.state.thresholdActive = nil
+AL.state.thresholdQueue = { { guid = "guid-W" } }
+eq(AL.OpenNextThreshold(), false, "erroring LootUnit reports failure")
+eq(AL.state.thresholdQueue[1].guid, "guid-W", "errored guid stays queued")
+eq(AL.state.thresholdSkipped["guid-W"], nil, "errored guid not parked")
+eq(AL.state.thresholdActive, nil, "errored guid not pinned")
+C_Loot.LootUnit = function(guid) table.insert(opened, guid) end
 -- Own chained window is not a manual window (chain keeps driving),
 -- a foreign window still blocks.
 AL.state.thresholdActive = "guid-X"
