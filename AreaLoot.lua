@@ -557,10 +557,6 @@ end
 -- by key, so "same corpse already handled" checks read one place.
 -- Runtime only, dropped by ResetRuntime like every other walk field.
 
--- Forward declaration: the chain body (queue predicate) lives AFTER the
--- scheduling section (OpenNext/OnClosed call locals defined there).
-local ChainCollect = nil
-
 local function GetPlayerLootRestriction()
   if M.state.playerControlLost then return "player control is lost" end
   if IsPlayerDeadOrGhost() then return "player is dead or a ghost" end
@@ -1130,7 +1126,6 @@ local function CollectThresholdQueue(results, skip, handledKeys)
   end
   return out
 end
-ChainCollect = CollectThresholdQueue
 function M.CollectThresholdQueue(results, skip, handledKeys)
   return CollectThresholdQueue(results, skip, handledKeys)
 end

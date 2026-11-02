@@ -26,6 +26,9 @@ local wow = {
   "CreateFrame", "UIParent", "DEFAULT_CHAT_FRAME", "GameTooltip",
   "GameFontHighlightSmall", "ChatFrameEditBox", "Minimap", "LootSlot",
   "LootFrame", "UIFrameFadeIn", "MouseIsOver",
+  -- 1.12 FauxScrollFrame template API (remembered list).
+  "FauxScrollFrame_Update", "FauxScrollFrame_OnVerticalScroll",
+  "FauxScrollFrame_GetOffset",
   "IsShiftKeyDown", "IsControlKeyDown",
   "SendChatMessage", "SendAddonMessage", "RandomRoll",
   "UnitName", "UnitClass", "UnitExists", "UnitIsPartyLeader",

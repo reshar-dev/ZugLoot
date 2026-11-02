@@ -398,7 +398,7 @@ AL.state.initialized = true
 ZugLoot.MasterLootUI = nil
 ZugLoot.LootWindow = nil
 local meleeOn, rangedOn = false, false
-local startedMelee, startedRanged, usedAction = nil, nil, nil
+local startedMelee, startedRanged, usedAction
 FocusUnit = function(u) _focusSet = true end
 UnitExists = function(u)
   if u == "target" then return _targetExists ~= false end
@@ -494,7 +494,7 @@ eq(usedAction, 12, "stock client re-presses the dropped swing")
 StartAttack = function() meleeOn = true startedMelee = true end
 _focusSet, _targetExists, _targetDead = nil, true, false
 meleeOn = true
-startedMelee, usedAction = nil, nil
+startedMelee = nil
 AL.RequestLoot("death")
 _targetDead = false -- target still alive
 AL.OnEvent("LOOT_SCAN_COMPLETED")

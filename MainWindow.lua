@@ -2031,8 +2031,9 @@ function M.RenderSetup()
     end
     local scrollF = nil
     if FauxScrollFrame_Update and listF and CreateFrame then
+      local scrollName = "ZugLootRememberedScroll"
       local okSF, sf = pcall(CreateFrame, "ScrollFrame",
-        "ZugLootRememberedScroll", listF, "FauxScrollFrameTemplate")
+        scrollName, listF, "FauxScrollFrameTemplate")
       if okSF and type(sf) == "table" and sf.SetWidth then
         scrollF = sf
         scrollF:SetWidth(listW) scrollF:SetHeight(listH)
