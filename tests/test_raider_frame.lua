@@ -208,6 +208,50 @@ eq(rolled[1][1], 1, "/roll from 1")
 eq(rolled[1][2], 100, "/roll SR cap")
 RandomRoll = nil
 
+-- 8. Shared color source: raider frame colors through LootWindow.QualityHex.
+-- Needs the shared helper loaded (it owns the nil/zero-is-white rule).
+if not ZugLoot.LootWindow then
+  dofile("LootWindow.lua")
+end
+local LW = ZugLoot.LootWindow
+-- The test stub's meta __index swallows raw GetItemQualityColor, so pin
+-- the client API with the same stub the addon-wide mock run uses
+-- (epic purple), letting the shared path compute a real hex. Floor
+-- math: 0.64*255=163 (A3), 0.21*255=53 (35), 0.93*255=237 (ED).
+GetItemQualityColor = function(q) return 0.64, 0.21, 0.93, "|cffa335ee" end
+-- Quality resolves through the shared chain, so the cache must answer:
+-- the raider file defines no GetItemInfo, pin a minimal epic entry.
+GetItemInfo = function(id)
+  local s = tostring(id or "")
+  if s == "17063" or string.find(s, "17063", 1, true) then
+    return "Thunderfury", "|cffa335ee|Hitem:17063:0:0:0|h[Thunderfury]|h|r",
+      4, 1, 1, "", "", "", "Interface\\Icons\\INV_Sword_01"
+  end
+  return nil
+end
+local sharedEpic = LW.QualityHex(4)
+eq(sharedEpic, "|cFFA335ED", "shared helper colors epic quality")
+local sharedWhite = LW.QualityHex(nil)
+eq(sharedWhite, "|cFFFFFFFF", "shared helper keeps unknown white")
+eq(LW.QualityHex(0), "|cFFFFFFFF", "shared helper keeps zero white")
+-- Raider frame reuses the same source: build an epic frame and assert
+-- its computed name/border colors derive from the shared helper.
+reset()
+grouping = "raid" lootMethod, lootId = "master", 1
+ZugLoot.DB.raiderFrame = "all"
+eq(RL.ShowItem("|cffa335ee|Hitem:17063:0:0:0|h[Thunderfury]|h|r", 15), true, "epic roll shows frame")
+-- Quality resolves through the shared chain; the probe records what
+-- SetItemInfo actually computed for text + border.
+local colors = RL._TestColors
+ok(colors ~= nil, "color probe recorded")
+ok(colors.textHex == LW.QualityHex(4), "name text uses the shared helper")
+ok(colors.border ~= nil and colors.border[1] ~= 0.2,
+  "border tinted by quality, not neutral grey")
+-- Unknown quality degrades to white text + neutral border, never grey.
+eq(LW.QualityHex(nil), "|cFFFFFFFF", "unknown quality stays white")
+GetItemQualityColor = nil
+GetItemInfo = nil
+
 if T.fail == 0 then
   print("raider frame policy passed")
 else
