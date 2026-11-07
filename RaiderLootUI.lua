@@ -5,7 +5,8 @@
 -- right, grouped SR > MS > OS > TMOG), four dice buttons at the bottom,
 -- top-screen winner banner. Master-loot rolls ONLY by default: the
 -- window pops off the master looter's roll call (ROLL_REQ addon message
--- or their RW line) and stays shut in every other mode — group loot,
+-- or their RW line, or the plain-RAID fallback when the ML holds no
+-- assist rank) and stays shut in every other mode — group loot,
 -- solo, or anyone else's chat. In group loot Blizzard's own Need/Greed
 -- frames own the vote (mirroring them would double-vote or forfeit);
 -- solo has nobody to roll against. Opt-out lives in Setup
@@ -485,8 +486,9 @@ function M.MatchRollCall(text, sender)
 end
 
 function M.OnEvent(event, a1, a2)
-  if event == "CHAT_MSG_RAID_WARNING" then
-    -- ML/RL roll call in RW (Pysanka style): plain item name, "Roll for
+  if event == "CHAT_MSG_RAID_WARNING" or event == "CHAT_MSG_RAID" then
+    -- ML/RL roll call in RW (Pysanka style) or plain RAID (ML without
+    -- assist falls back off /rw — Comm.Say): plain item name, "Roll for
     -- X: ..." dice line, or full link (LootBlare trigger). Verify sender.
     -- ShowItem enforces the master-loot gate (group-loot RW chatter
     -- never pops the frame by default).

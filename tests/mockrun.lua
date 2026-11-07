@@ -1007,6 +1007,11 @@ GetNumRaidMembers = function() return 3 end;
 Z.RaiderLootUI.Hide();
 Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "Roll for Nemesis Gloves: /roll (MS) or /roll 99 (OS) or /roll 98 (TMOG)", "Pysanka");
 assert(Z.RaiderLootUI.itemNameText == "Nemesis Gloves", "dice line pops window with item, got: " .. tostring(Z.RaiderLootUI.itemNameText));
+-- Plain-RAID fallback (ML without assist): same dice line, same pop.
+Z.RaiderLootUI.Hide();
+Z.RaiderLootUI.itemNameText = nil;
+Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID", "Roll for Nemesis Gloves: /roll (MS) or /roll 99 (OS) or /roll 98 (TMOG)", "Pysanka");
+assert(Z.RaiderLootUI.itemNameText == "Nemesis Gloves", "plain-raid dice line pops window, got: " .. tostring(Z.RaiderLootUI.itemNameText));
 Z.RaiderLootUI.Hide();
 Z.RaiderLootUI.itemNameText = nil;
 Z.RaiderLootUI.OnEvent("CHAT_MSG_RAID_WARNING", "Nemesis Gloves", "Pysanka");

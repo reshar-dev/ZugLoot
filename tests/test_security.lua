@@ -22,6 +22,8 @@ local raidMembers, partyMembers = 0, 0
 local lootMethod, lootId = nil, nil
 local raidRoster = {} -- { {name, rank} }
 local partyNames = {} -- [slot] = name
+IsRaidLeader = function() return false end
+IsRaidOfficer = function() return false end
 
 GetNumRaidMembers = function() return raidMembers end
 GetNumPartyMembers = function() return partyMembers end
@@ -70,6 +72,26 @@ ok(Sec.CanAcceptFrom("Player5"), "ML sheet trusted")
 -- sheet is refused, and broadcast stays shut.
 raidRoster[1] = { "Player1", 1 }
 ok(not Sec.CanAcceptFrom("Player1"), "leader-without-ML sheet refused")
+-- Warn rank is orthogonal to ML rights: plain members (even the ML)
+-- fall back to RAID; leaders and assists may use RAID_WARNING.
+-- Rigged globals below; restore to plain-member stubs afterwards.
+local saveLeader, saveOfficer = IsRaidLeader, IsRaidOfficer
+IsRaidLeader = function() return true end
+IsRaidOfficer = function() return false end
+ok(Sec.CanRaidWarn(), "raid leader may warn")
+IsRaidLeader = function() return false end
+IsRaidOfficer = function() return true end
+ok(Sec.CanRaidWarn(), "assist may warn")
+IsRaidLeader = function() return false end
+IsRaidOfficer = function() return false end
+ok(not Sec.CanRaidWarn(), "plain member falls back (no /rw)")
+IsRaidLeader, IsRaidOfficer = saveLeader, saveOfficer
+raidMembers = 0 -- solo never warns
+ok(not Sec.CanRaidWarn(), "solo never warns")
+raidMembers = 40
+IsRaidLeader, IsRaidOfficer = nil, nil -- missing API: never warn
+ok(not Sec.CanRaidWarn(), "missing rank API never warns")
+IsRaidLeader, IsRaidOfficer = saveLeader, saveOfficer
 
 -- 3. I am the ML (id 0): may import + broadcast.
 lootMethod, lootId = "master", 0

@@ -264,7 +264,10 @@ end
 -- Single chat router for ALL roll traffic — sim AND live share it.
 -- One policy, speaker + channel: solo -> the ZugLoot log (local chat
 -- frame); grouped, only the master looter speaks — party -> PARTY,
--- raid -> RAID (RAID_WARNING when warn=true), while raiders see the
+-- raid -> RAID (RAID_WARNING when warn=true AND the speaker holds
+-- raid-leader/assist rank, else plain RAID: a master looter without
+-- assist cannot send /rw, so warn traffic falls back instead of
+-- erroring), while raiders see the
 -- same lines locally. EXCEPTION: sim lines (isSim) always speak to
 -- the group — a sim is an explicit user action ("show the raid this
 -- test roll"), never background echo, so the simulator reads exactly
@@ -295,9 +298,17 @@ function M.Say(msg, warn, isSim)
     return "local"
   end
   if Z.SRSecurity and Z.SRSecurity.IsInRaid and Z.SRSecurity.IsInRaid() then
+    -- /rw needs raid-leader/assist rank: ML without assist falls back
+    -- to plain RAID (never error or drop). No CanRaidWarn shim (old
+    -- harness) keeps the legacy warn behavior; a present one decides.
+    local canWarn = warn
+    if canWarn and Z.SRSecurity.CanRaidWarn then
+      canWarn = Z.SRSecurity.CanRaidWarn()
+    end
+    local chan = (canWarn and "RAID_WARNING") or "RAID"
     if SendChatMessage then
-      SendChatMessage(msg, warn and "RAID_WARNING" or "RAID")
-      return warn and "RAID_WARNING" or "RAID"
+      SendChatMessage(msg, chan)
+      return chan
     end
     -- Grouped but headless (or client API missing): the raid WOULD
     -- see this line. Mirror it into the log tagged, never silently

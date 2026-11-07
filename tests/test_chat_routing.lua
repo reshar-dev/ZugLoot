@@ -35,12 +35,19 @@ GetRaidRosterInfo = function() return nil end
 time = time or os.time
 
 local grouping = "solo"
+-- Raid-rank rig: nil = headless (no rank proof), true = raid leader,
+-- "officer" = assist, false = plain raider (ML without assist).
+local raidRank = nil
 ZugLoot.SRSecurity = {
   IsInRaid = function() return grouping == "raid" end,
   IsInParty = function() return grouping == "party" end,
   IsInGroup = function() return grouping ~= "solo" end,
   IsSolo = function() return grouping == "solo" end,
   AmML = function() return true end,
+  CanRaidWarn = function()
+    if raidRank == nil then return false end -- headless: no rank proof
+    return raidRank == true or raidRank == "officer"
+  end,
 }
 ZugLoot.RaiderLootUI = { ShowItem = function() end, OnRoll = function() end, Hide = function() end }
 ZugLoot.DropLog = { Add = function() end }
@@ -73,6 +80,8 @@ end
 -- Player-link pins: clickable class color per name.
 local LINK_AAA = "|cFFF58CBA|Hplayer:Aaa|h[Aaa]|h|r"
 local LINK_BBB = "|cFF69CCF0|Hplayer:Bbb|h[Bbb]|h|r"
+
+local function setRank(r) raidRank = r end
 
 local function reset()
   ZugLoot.Timer.CancelAll()
@@ -129,12 +138,13 @@ ok(string.find(soloLog, LINK_AAA .. " rolls 90 (1-100)", 1, true) ~= nil, "solo 
 ok(string.find(soloLog, "won by " .. LINK_AAA .. " (100)", 1, true) ~= nil, "solo log has verdict (linked)")
 ok(string.find(soloLog, LINK_AAA .. " wins ", 1, true) ~= nil, "solo log has award line (linked)")
 
--- 2. Same sim IN RAID: identical text, but on RAID / RAID_WARNING.
+-- 2. Same sim IN RAID with assist: identical text on RAID / RAID_WARNING.
 -- NOTE: rigged() cycles {90, 80} across FakeCount draws + kind draws,
 -- so the exact fake roster varies with draw order — pins assert the
 -- shared builders + channels, not a byte-fixed roll list.
 reset()
 grouping = "raid"
+setRank("officer")
 math.random = rigged({ 90, 80 })
 Sim.SimItem("|cffa335ee|Hitem:1001:::::::::|h[Dragonfang Blade]|h|r")
 math.random = realRandom
@@ -147,12 +157,29 @@ ok(string.find(raidChat, "|Hplayer:Aaa", 1, true) ~= nil, "raid sim roll lines n
 ok(string.find(raidChat, "won by ", 1, true) ~= nil, "raid sim verdict matches solo shape")
 ok(string.find(raidChat, " wins ", 1, true) ~= nil, "raid sim award matches solo shape")
 -- ...on the group channels only (start is a warning).
-ok(string.find(chatChans(), "RAID_WARNING", 1, true) ~= nil, "roll-start warns the raid")
+ok(string.find(chatChans(), "RAID_WARNING", 1, true) ~= nil, "roll-start warns the raid (assist)")
 ok(string.find(chatChans(), "RAID", 1, true) ~= nil, "roll traffic on RAID")
 for i = 1, #sent do
   ok(sent[i].chan == "RAID" or sent[i].chan == "RAID_WARNING", "raid sends RAID/RAID_WARNING only")
 end
 eq(#printed, 3, "raid sim keeps only harness lines local (queue/drain notes)")
+
+-- 2b. Same sim IN RAID as ML WITHOUT assist: warn traffic falls back
+-- to plain RAID (an ML without leader/assist rank cannot send /rw).
+reset()
+grouping = "raid"
+setRank(false)
+math.random = rigged({ 90, 80 })
+Sim.SimItem("|cffa335ee|Hitem:1001:::::::::|h[Dragonfang Blade]|h|r")
+math.random = realRandom
+LW.doAction(1001, "finish")
+ML.AwardChosen({ name = "Aaa", via = "winner" }, 1001)
+ok(#sent > 0, "assist-less sim still reaches group chat")
+for i = 1, #sent do
+  eq(sent[i].chan, "RAID", "assist-less sim sends RAID only (no /rw)")
+end
+ok(string.find(chatText(), "Roll ", 1, true) ~= nil, "assist-less start text unchanged")
+setRank(nil)
 
 -- 3. Same sim IN PARTY: identical text on PARTY (warnings degrade: no
 -- party warning channel exists).
@@ -169,8 +196,12 @@ for i = 1, #sent do
 end
 
 -- 4. LIVE roll shares the path: same builders, same channels.
+-- Rank pinned per side: the assisting ML warns, the plain-ML
+-- fallback stays on RAID (2b covers the warn side of sim; 4b the
+-- live side).
 reset()
 grouping = "raid"
+setRank("officer")
 LW.SetItems({ { itemID = 1001, link = "item:1001", name = "Dragonfang Blade" } }, "loot")
 LW.OpenDetail(1001)
 LW.doAction(1001, "roll")
@@ -188,8 +219,24 @@ ok(string.find(liveChat, "Aaa rolls 90", 1, true) == nil, "live intake stays qui
 ok(string.find(liveChat, "won by " .. LINK_AAA .. " (100)", 1, true) ~= nil, "live verdict shares the builder")
 ok(string.find(liveChat, LINK_AAA .. " wins |c", 1, true) ~= nil, "live award shares the builder (linked)")
 for i = 1, #sent do
-  ok(sent[i].chan == "RAID" or sent[i].chan == "RAID_WARNING", "live raid sends RAID/RAID_WARNING only")
+  ok(sent[i].chan == "RAID" or sent[i].chan == "RAID_WARNING", "live raid sends RAID/RAID_WARNING only (assist)")
 end
+-- 4b. LIVE roll as ML WITHOUT assist: identical text, RAID only.
+reset()
+grouping = "raid"
+setRank(false)
+LW.SetItems({ { itemID = 1001, link = "item:1001", name = "Dragonfang Blade" } }, "loot")
+LW.OpenDetail(1001)
+LW.doAction(1001, "roll")
+ML.IntakeChatRoll("Aaa rolls 90 (1-100)")
+ML.IntakeChatRoll("Bbb rolls 80 (1-100)")
+LW.doAction(1001, "finish")
+ML.AwardChosen({ name = "Aaa", via = "winner" }, 1001)
+ok(#sent > 0, "assist-less live roll still reaches group chat")
+for i = 1, #sent do
+  eq(sent[i].chan, "RAID", "assist-less live sends RAID only (no /rw)")
+end
+setRank(nil)
 -- The sim fake line and the shared builder agree word-for-word.
 eq(ML.RollLine({ name = "Aaa", roll = 90, min = 1, max = 100 }), LINK_AAA .. " rolls 90 (1-100)", "RollLine format pinned")
 LW.SetItems({ { itemID = 1001, link = "item:1001", name = "Dragonfang Blade" } }, "loot")
@@ -204,6 +251,7 @@ ok(string.find(awardBuilt, "[Dragonfang Blade]", 1, true) ~= nil, "AwardLine nam
 -- channels (start warns). (AmML is flipped per-grouping inside: the
 -- shared-router block above ends ML, and reset() doesn't touch it.)
 ZugLoot.SRSecurity.AmML = function() return true end
+setRank("officer") -- non-ML simmers still warn when they hold assist
 for _, g in ipairs({ "raid", "party" }) do
   reset()
   grouping = g
@@ -262,6 +310,9 @@ ZugLoot.SRSecurity.AmML = function() return true end
 
 -- 5c. Non-ML LIVE flow stays local: only the master looter speaks live
 -- lines to the group (no background echo from raiders' clients).
+-- Rank pinned: warnings route through the same fallback (assist ->
+-- /rw, plain -> RAID), but these lines never reach the wire at all.
+setRank("officer")
 for _, g in ipairs({ "raid", "party" }) do
   reset()
   grouping = g
@@ -279,6 +330,34 @@ for _, g in ipairs({ "raid", "party" }) do
   ok(string.find(raiderLog, LINK_AAA .. " wins ", 1, true) ~= nil, g .. " raider still sees the award locally")
 end
 ZugLoot.SRSecurity.AmML = function() return true end
+setRank(nil)
+
+-- 5d. Unit pins for the rank gate (Comm.Say WarnGroup side):
+-- raid leader may warn, assist may warn, a plain raider (ML without
+-- rank) may not. Party has no warn channel: always party text.
+reset()
+grouping = "raid"
+ZugLoot.SRSecurity.AmML = function() return true end
+local function chanOf(rank)
+  setRank(rank)
+  sent = {}
+  ZugLoot.Comm.WarnGroup("rank probe")
+  setRank(nil)
+  eq(#sent, 1, "warn probe sends (rank " .. tostring(rank) .. ")")
+  return sent[1].chan
+end
+eq(chanOf(true), "RAID_WARNING", "raid leader warns")
+eq(chanOf("officer"), "RAID_WARNING", "assist warns")
+eq(chanOf(false), "RAID", "plain ML falls back to RAID")
+-- Party: warn degrades to PARTY regardless of rank.
+reset()
+grouping = "party"
+setRank(true)
+sent = {}
+ZugLoot.Comm.WarnGroup("party probe")
+eq(#sent, 1, "party warn probe sends")
+eq(sent[1].chan, "PARTY", "party warn degrades to PARTY")
+setRank(nil)
 
 -- 5c. Player names in chat are clickable class-colored links
 -- (|cHEX|Hplayer:Name|h[Name]|h|r): click -> whisper menu, color ->

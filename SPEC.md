@@ -302,13 +302,16 @@ Sheet = {
 
 - `/zl` shows console: loot list (current loot window items w/ SR badges + counts).
 Rolls start from the loot-window Roll / Raid roll buttons only. Announce via
-RAID_WARNING (LootBlare trigger compatibility) + `ROLL_REQ` addon message.
+RAID_WARNING when the speaker holds raid-leader/assist rank, else plain
+RAID (a master looter WITHOUT assist cannot send /rw — `Comm.Say`
+falls back instead of erroring; LootBlare trigger compatibility) +
+`ROLL_REQ` addon message.
 Accept chat `CHAT_MSG_SYSTEM` rolls (`X rolls Y (1-Z)`) while the roll
 window is open, up to the player's SR allowance (one roll, or N rolls
 for N reservations of the item); over-rolls flagged, ties
 re-roll fresh. Exactly one roll at a time — closing its window ends it.
 Raider clients pop their roll window off the ML/RL's RAID_WARNING roll
-call ONLY (`MatchRollCall`: `Roll for X: /roll ...` dice line or full
+call OR the plain-RAID fallback (ML without assist) ONLY (`MatchRollCall`: `Roll for X: /roll ...` dice line or full
 item link — Pysanka parity). Drop lists, winners, countdowns, stop
 lines, raid-roll numbering, bare names and non-ML senders never trigger.
 - **Loot window** (`LootWindow.lua`, raider-window style (220px dark
@@ -497,7 +500,8 @@ lines, raid-roll numbering, bare names and non-ML senders never trigger.
 ### 4.3 Raider loot window (`RaiderLootUI.lua`) — LootBlare-like
 
 - Appears for master-loot rolls ONLY (default): (a) the ML's `ROLL_REQ`
-  addon message, or (b) the ML/RL's RAID_WARNING roll call
+  addon message, or (b) the ML/RL's RAID_WARNING roll call (or the
+  plain-RAID fallback when the ML holds no assist rank)
   (`MatchRollCall`: `Roll for X: /roll ...` dice line or full item link
   — Pysanka parity). Group-loot rolls, solo, and anyone else's chat
   never pop it — Blizzard's own Need/Greed frames own the group-loot
@@ -750,7 +754,8 @@ window owns everything; closing it ends the roll — exactly like live.
 - **One chat router, one set of lines.** Sim and live rolls share
   `Comm.Say` — the ONLY difference is the channel: solo → the ZugLoot
   log (local chat frame), party → `PARTY`, raid → `RAID` (`RAID_WARNING`
-  for roll-start warnings; warnings have no party channel, so plain
+  for roll-start warnings when the speaker holds raid-leader/assist rank,
+  else plain `RAID`; warnings have no party channel, so plain
   party text). Every roll line goes through shared builders in
   `MasterLootUI` (`StartLine`, `RollLine` via `AddRoll`, `ResultLine`,
   `AwardLine`, `SandLine`) + shared senders (`AnnounceRoll`,

@@ -173,12 +173,21 @@ eq(opened, 0, "non-ML ROLL_REQ ignored")
 RL.ShowItem = realShow
 
 -- 5. RW roll call from the ML opens only under master loot (default).
+-- Plain-RAID fallback (ML without assist) opens too: Comm.Say routes
+-- warns there, so the matcher listens on both events.
 reset()
 grouping = "raid" lootMethod, lootId = "master", 1
 opened = 0
 RL.ShowItem = function(...) opened = opened + 1 return true end
 RL.OnEvent("CHAT_MSG_RAID_WARNING", "Roll for Thunderfury: /roll (MS)", "MasterLou")
 eq(opened, 1, "ML RW call opens under master loot")
+RL.ShowItem = realShow
+reset()
+grouping = "raid" lootMethod, lootId = "master", 1
+opened = 0
+RL.ShowItem = function(...) opened = opened + 1 return true end
+RL.OnEvent("CHAT_MSG_RAID", "Roll for Thunderfury: /roll (MS)", "MasterLou")
+eq(opened, 1, "ML plain-RAID call opens (assist-less fallback)")
 RL.ShowItem = realShow
 reset()
 grouping = "raid" lootMethod = "group"

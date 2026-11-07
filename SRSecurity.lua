@@ -78,6 +78,27 @@ end
 -- the group.
 function M.AmML() return M.IsML() end
 
+-- May this client use RAID_WARNING? Vanilla only lets the raid leader
+-- and assistants send /rw — a master looter WITHOUT assist gets an
+-- error (or silent drop) on that channel. Warn traffic must fall back
+-- to plain RAID in that case. Nil-safe headless (no client API =
+-- false: never assume warn rights without proof).
+function M.CanRaidWarn()
+  if not M.IsInRaid() then return false end
+  if IsRaidLeader then
+    local ok, v = pcall(IsRaidLeader)
+    if ok and v then return true end
+  end
+  if IsRaidOfficer then
+    local ok, v = pcall(IsRaidOfficer)
+    if ok and v then return true end
+  end
+  return false
+end
+
+-- Rank probe pins: leader warns, assist warns, plain member (even the
+-- ML) falls back, solo never warns, missing API never warns.
+
 -- May this client load a sheet locally (import = parse + store + view/sim)?
 -- ALWAYS: anyone can import for their own view (raiders want to see the
 -- sheet too). Importing never pushes anything (see CanBroadcast) and
