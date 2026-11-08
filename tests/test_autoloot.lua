@@ -10,6 +10,10 @@ local function eq(a, b, msg)
   if a ~= b then T.fail = T.fail + 1 table.insert(T.errors, "FAIL " .. (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a))
   else T.pass = T.pass + 1 end
 end
+local function ok(v, msg)
+  if not v then T.fail = T.fail + 1 table.insert(T.errors, "FAIL " .. (msg or "expected truthy"))
+  else T.pass = T.pass + 1 end
+end
 ZugLoot = {}
 dofile("Util.lua")
 dofile("Constants.lua")
@@ -66,15 +70,23 @@ eq(AR.MaybeAutoRaidRoll("junk"), nil, "junk item refuses")
 eq(AR.MaybeAutoRaidRoll(19019), nil, "uncategorized epic never rolls")
 -- Disabled category refuses even with the world stubbed.
 ZugLoot.DB.autoRaidRoll.ZG = nil
+local startedQuiet = nil
 ZugLoot.MasterLootUI = {
   roll = nil, lootOpen = true,
-  StartRaidRoll = function(itemID) return { itemID = itemID } end,
+  StartRaidRoll = function(itemID, quiet)
+    startedQuiet = quiet
+    return { itemID = itemID }
+  end,
 }
 ZugLoot.SRSecurity.AmML = function() return true end
 eq(AR.MaybeAutoRaidRoll(19698), nil, "ZG coin ignored when ZG off")
--- Enabled category starts the raid roll through the ML console.
+-- Enabled category starts the raid roll through the ML console —
+-- QUIET (no chat for auto raid-rolls, see test_remembered §8).
+-- (startedQuiet still nil here: the OFF call above never reaches the
+-- starter, so the init stands.)
 ZugLoot.DB.autoRaidRoll.ZG = true
 eq(AR.MaybeAutoRaidRoll(19698), true, "ZG coin raid-rolls when ZG on")
+eq(startedQuiet, true, "auto raid-roll starts quiet (no chat)")
 -- A running roll blocks a second start.
 ZugLoot.MasterLootUI.roll = { itemID = 9999 }
 eq(AR.MaybeAutoRaidRoll(19699), nil, "open roll blocks a second start")
@@ -87,6 +99,7 @@ ZugLoot.SRSecurity.AmML = function() return true end
 eq(AR.MaybeAutoRaidRoll(22484), nil, "rune needs its own toggle")
 ZugLoot.DB.autoRaidRoll.RUNE = true
 eq(AR.MaybeAutoRaidRoll(22484), true, "rune rolls when RUNE on")
+ok(startedQuiet, "rune auto-roll starts quiet too")
 ZugLoot.DB.autoRaidRoll.RUNE = nil
 ZugLoot.DB.autoRaidRoll.ZG = nil
 ZugLoot.MasterLootUI = nil

@@ -113,7 +113,7 @@ function M.RememberedLine(entry)
 end
 
 -- The last FINISHED round, stamped by FinishRoll before the roll clears:
--- { itemID, itemLink, mode, silent, roster, n }. Lets the award
+-- { itemID, itemLink, mode, silent, quiet, roster, n }. Lets the award
 -- window "Continue rolling": reopen intake on the same item with the
 -- landed rolls kept. Item-checked on use, so a stale stamp never leaks
 -- across items.
@@ -156,6 +156,10 @@ end
 -- Start the one roll. Refuses when a roll is already open (finish,
 -- award, or close it first). silent=true skips the addon-message
 -- broadcast (sim must not pop other clients' roller windows).
+-- quiet=true skips every CHAT line for the roll's lifecycle (start,
+-- verdict, award): the auto paths (category auto-raid-roll, remembered
+-- raid-roll/award) resolve without spamming the group — records,
+-- addon sync, and the local window still update.
 --
 -- LOOT-METHOD GUARD (issue #18): the session freezes the moment the
 -- live method differs from the scan-time one. While frozen NO
@@ -167,7 +171,7 @@ end
 -- the won state exactly as they were — restoring the method (or
 -- cancelling the roll) resumes cleanly. Sim/test flows never consult
 -- the method, and unstamped rows never refuse.
-function M.BeginRoll(itemID, itemLink, mode, silent)
+function M.BeginRoll(itemID, itemLink, mode, silent, quiet)
   if M.roll then return nil end
   -- Frozen: no roll may START under the wrong method — it would
   -- collect under one mode and award under another, stranding items.
@@ -176,6 +180,7 @@ function M.BeginRoll(itemID, itemLink, mode, silent)
   if mode ~= "SIM" and M.RefuseWhenFrozen(itemID) then return nil end
   local roll = { itemID = itemID, itemLink = itemLink, mode = mode,
     rolls = {}, silent = silent and true or false,
+    quiet = quiet and true or false,
     method = M.CurrentLootMethod() }
   M.roll = roll
   -- Roll-start line: ONE format for sim and live ("Roll <Item> — SR/MS
@@ -184,13 +189,16 @@ function M.BeginRoll(itemID, itemLink, mode, silent)
   -- (WarnSim bypasses the speaker gate) so a raid sim reads like the
   -- real roll even when the simmer isn't the ML. Verifiable: tests pin
   -- text + channel per grouping and role (tests/test_chat_routing.lua).
-  local label = M.StartLine(itemID, itemLink, mode)
-  if Z.Comm and Z.Comm.WarnGroup then
-    Z.Comm.WarnGroup(label)
-  elseif mode == "SIM" and Z.Comm and Z.Comm.WarnSim then
-    Z.Comm.WarnSim(label)
-  else
-    Z.Print(label)
+  -- Quiet (auto) rolls skip the line entirely — no chat, not even local.
+  if not roll.quiet then
+    local label = M.StartLine(itemID, itemLink, mode)
+    if Z.Comm and Z.Comm.WarnGroup then
+      Z.Comm.WarnGroup(label)
+    elseif mode == "SIM" and Z.Comm and Z.Comm.WarnSim then
+      Z.Comm.WarnSim(label)
+    else
+      Z.Print(label)
+    end
   end
   if not roll.silent and Z.Comm then
     Z.Comm.SendRollReq(itemID, itemLink, mode)
@@ -312,7 +320,15 @@ function M.ShouldBroadcastRoster(checksum, now, last)
   local at = tonumber(last.at) or 0
   return (now - at) >= M.RAIDROLL_BROADCAST_WINDOW
 end
-function M.StartRaidRoll(itemID)
+-- quiet=true: this roll is an AUTO action (category auto-raid-roll,
+-- remembered raid-roll) — fully silent in chat: no start line
+-- (BeginRoll), no numbered-roster broadcast, no verdict/award lines,
+-- and no ROLL_REQ (silent=true: raiders can't roll on a raid-roll
+-- anyway — intake is ML-only — so popping their window is pure
+-- noise). The ML's own RandomRoll still feeds intake, and the award
+-- hands the item out as usual. Manual raid-rolls (button, /zl rr)
+-- pass nothing and announce exactly like before.
+function M.StartRaidRoll(itemID, quiet)
   if not M.RequireML() then return end
   itemID = Z.Util.ItemID(itemID)
   if not itemID then Z.Print("Usage: /zl rr <itemlink>") return end
@@ -330,15 +346,18 @@ function M.StartRaidRoll(itemID)
     Z.Print("Nobody in the raid to roll for.")
     return
   end
-  local roll = M.BeginRoll(itemID, link, "RAIDROLL", false)
+  quiet = quiet and true or false
+  local roll = M.BeginRoll(itemID, link, "RAIDROLL", quiet, quiet)
   if not roll then return end
   roll.roster = roster -- frozen: leavers/joiners mid-roll change nothing
   roll.n = Z.Util.ArrayCount(roster)
   -- Spam gate (issue #19): same roster within 5 min skips the numbered
   -- list — "Raid rolling <link>..." (sent by BeginRoll) is enough.
+  -- Quiet (auto) rolls never broadcast AND never touch the cache: a
+  -- silent roll must not consume the next manual roll's numbering.
   local checksum = M.RosterChecksum(roster)
   local broadcast = M.ShouldBroadcastRoster(checksum, M.Now(), M.lastRaidRollCast)
-  if broadcast then
+  if broadcast and not quiet then
     M.lastRaidRollCast = { checksum = checksum, at = M.Now() }
   -- Numbered raid, chunked so no chat line exceeds limits.
   local buf = ""
@@ -607,7 +626,7 @@ function M.ContinueRoll(itemID)
   -- the stamp: ContinueRoll is the manual path, never the tie path.
   if Z.Util.ArrayCount(stamp.tied or {}) > 0 then
     local tieRoll = M.BeginRoll(itemID, stamp.itemLink or ("item:" .. tostring(itemID)),
-      stamp.mode or "SR", stamp.silent)
+      stamp.mode or "SR", stamp.silent, stamp.quiet)
     if not tieRoll then return nil end
     if stamp.roster then tieRoll.roster = stamp.roster end
     if stamp.n then tieRoll.n = stamp.n end
@@ -616,7 +635,7 @@ function M.ContinueRoll(itemID)
     return tieRoll
   end
   local roll = M.BeginRoll(itemID, stamp.itemLink or ("item:" .. tostring(itemID)),
-    stamp.mode or "SR", stamp.silent)
+    stamp.mode or "SR", stamp.silent, stamp.quiet)
   if not roll then return nil end
   if stamp.roster then roll.roster = stamp.roster end
   if stamp.n then roll.n = stamp.n end
@@ -759,7 +778,7 @@ function M.FinishRoll(itemID)
   -- (never "finished"): no resolution happened, retry after restore.
   if M.RefuseWhenFrozen(roll.itemID) then return "frozen" end
   M.lastRound = { itemID = roll.itemID, itemLink = roll.itemLink,
-    mode = roll.mode, silent = roll.silent,
+    mode = roll.mode, silent = roll.silent, quiet = roll.quiet,
     roster = roll.roster, n = roll.n, tied = roll.tied }
   M.EndRoll()
   local sheet = Z.DB and Z.DB.sheet
@@ -802,13 +821,16 @@ function M.FinishRoll(itemID)
       wantRemember = d and d.itemID == roll.itemID and d.rememberChecked
         and true or false
     end
-    local ok = M.Award(roll.itemID, nm, source)
+    local ok = M.Award(roll.itemID, nm, source, nil, roll.quiet)
     if ok then
       -- Sim rolls never persist.
       if wantRemember then
         M.RememberedSet(roll.itemID, true, "raidroll", nil,
           roll.itemLink)
       end
+      -- Quiet (auto) raid-roll done: chain the next pending auto
+      -- action (multi-trash corpses fully auto-handle, no clicks).
+      if roll.quiet then M.AutoNext() end
       return "awarded " .. tostring(nm)
     end
     -- Handoff failed (non-candidate, walked away, dead call): the row
@@ -910,8 +932,12 @@ function M.AwardLine(itemID, link, winnerName, tradeTo)
   end
   return line
 end
-function M.AnnounceAward(itemID, link, winnerName, tradeTo, isSim)
+function M.AnnounceAward(itemID, link, winnerName, tradeTo, isSim, quiet)
   local line = M.AwardLine(itemID, link, winnerName, tradeTo)
+  -- Quiet (auto) awards return the line but emit nothing: no chat,
+  -- not even local. The handoff, won marks, addon broadcast, and
+  -- drop log (below) still run — only the chat line is skipped.
+  if quiet then return line end
   if Z.Comm and Z.Comm.SayGroup then Z.Comm.SayGroup(line)
   elseif isSim and Z.Comm and Z.Comm.SaySim then Z.Comm.SaySim(line)
   else Z.Print(line) end
@@ -997,15 +1023,20 @@ end
 
 -- One line per finished roll: who won (or tie / no winner). The window
 -- already shows every roll with its kind — chat gets the verdict only.
+-- Quiet (auto) rolls skip both chat lines: the record below (sheet,
+-- session broadcast, raider banner, window refresh) still runs.
 function M.AnnounceResult(roll, res)
+  local quiet = roll and roll.quiet and true or false
   local totals = M.RollTotalsLine(res)
-  if totals then
+  if totals and not quiet then
     M.AnnounceVerdict(totals, roll and roll.mode == "SIM")
   end
   local line = M.ResultLine(roll, res)
   -- Sim verdicts speak to the group even when the simmer isn't the ML
   -- (SaySim bypasses the speaker gate); live keeps the ML-only gate.
-  M.AnnounceVerdict(line, roll and roll.mode == "SIM")
+  if not quiet then
+    M.AnnounceVerdict(line, roll and roll.mode == "SIM")
+  end
   -- Raider banner follows the SAME tie-first rule: a tie shows the
   -- re-roll call, never a winner (winners[] is populated on ties).
   if Z.Util.ArrayCount(res.tied or {}) > 0 then
@@ -1648,7 +1679,11 @@ end
 -- for the item FIRST (EndRoll), so deciding off the ... menu can never
 -- leave a roll collecting behind the award. tradeTo (TMOG awards): the
 -- normal winner named in the "Trade to <player> after equipping." note.
-function M.Award(itemID, winnerName, source, tradeTo)
+-- quiet=true: this award is an AUTO action (auto raid-roll finish,
+-- remembered direct-award) — the chat line is skipped (AnnounceAward),
+-- everything else runs: handoff, won marks, addon AWARD broadcast,
+-- drop log, window cleanup.
+function M.Award(itemID, winnerName, source, tradeTo, quiet)
   if not M.RequireML() then return end
   if not itemID or not winnerName or winnerName == "" then
     Z.Print("Pick a recipient first.")
@@ -1742,7 +1777,9 @@ function M.Award(itemID, winnerName, source, tradeTo)
   -- (Comm.Say) picks the channel by grouping — solo lands in the
   -- ZugLoot log, party in PARTY, raid in RAID. Verifiable: tests pin
   -- text + channel per grouping (tests/test_chat_routing.lua).
-  M.AnnounceAward(itemID, link, winnerName, tradeTo, source == "sim")
+  -- Quiet (auto) awards skip the line (data still syncs below).
+  M.AnnounceAward(itemID, link, winnerName, tradeTo,
+    source == "sim", quiet)
   -- Remembered award: the detail checkbox is ticked — the ticked
   -- handling is remembered, so the next drop direct-awards to this
   -- winner on open. Convergent: a ticked award always (re)stores its
@@ -2307,8 +2344,8 @@ function M.SandCommand(argText)
   return false
 end
 
-function M.AwardDirect(itemID, winnerName, source, tradeTo)
-  return M.Award(itemID, winnerName, source, tradeTo)
+function M.AwardDirect(itemID, winnerName, source, tradeTo, quiet)
+  return M.Award(itemID, winnerName, source, tradeTo, quiet)
 end
 -- Trade note for TMOG awards: the choice carries via = "tmog" on the
 -- TMOG kind row. Trade target is the normal (SR/MS/OS) winner off the
@@ -2813,7 +2850,14 @@ function M.OnLootOpened()
     for i = 1, Z.Util.ArrayCount(found) do
       local f = found[i]
       local q = f and tonumber(f.quality) or nil
-      if q == nil or q >= minQ then table.insert(shown, f) end
+      -- Auto-handled rows resolve silently (no chat for their
+      -- lifecycle), so they never join the drop call either — the
+      -- group only hears about items it must actually roll.
+      local id = f and (f.itemID
+        or (Z.Util.ItemID and Z.Util.ItemID(f.link)))
+      if (q == nil or q >= minQ) and not M.AutoSilentOnOpen(id) then
+        table.insert(shown, f)
+      end
     end
     if not solo and Z.Util.ArrayCount(shown) > 0 then
       hushed(function()
@@ -2890,22 +2934,12 @@ function M.OnLootOpened()
     for i = 1, Z.Util.ArrayCount(free) do push(free[i]) end
     Z.LootWindow.SetItems(rows, "loot")
     Z.LootWindow.Show("Boss loot")
-    -- Auto raid-roll (Setup Automation options, default OFF): trash
-    -- whose category is enabled raid-rolls straight away, first match
-    -- wins (one roll at a time — the roll itself blocks the rest).
-    if Z.AutoRoll and Z.AutoRoll.MaybeAutoRaidRoll then
-      for i = 1, Z.Util.ArrayCount(Z.LootWindow.items) do
-        local it = Z.LootWindow.items[i]
-        if it and not it.coin and not it.ignored then
-          if Z.AutoRoll.MaybeAutoRaidRoll(it.itemID) then break end
-        end
-      end
-    end
-    -- Remembered items (Setup Remembered list): per-item auto-action
-    -- on open — raid-roll the row, or direct-award it to the stored
-    -- player. First remembered match wins (one roll at a time); sim
+    -- Auto actions on open (all quiet — no chat): enabled trash
+    -- categories raid-roll straight away, then remembered awards
+    -- apply and remembered raid-rolls start. At most one roll opens
+    -- (one roll at a time — the finish chain advances the rest); sim
     -- rows never apply (no corpse, test-only queue).
-    M.ApplyRemembered()
+    M.AutoNext()
     -- Corpse auto-loot (Setup option, default OFF): the moment the
     -- window builds, take everything we are allowed to take — free
     -- rows + coin straight off the corpse, no clicks needed. Roll rows
@@ -2919,34 +2953,103 @@ function M.OnLootOpened()
   end
 end
 
--- Remembered auto-action on open (Setup Remembered list). First
--- remembered row wins: "raidroll" starts a raid roll (ML-only,
--- same guards as the bar button); "award" direct-awards to the
--- stored player (same guards as a manual award). Guards: no roll
--- already running, corpse actually open, live rows only (sim rows
--- never apply). Returns "raidroll" / "awarded <name>" / false.
--- Headless-testable through the same stubs the bar paths use
--- (lootOpen + roll state, no frame).
-function M.ApplyRemembered()
+-- Next pending category auto-raid-roll: first trash row whose
+-- category is enabled raid-rolls straight away (quiet — no chat).
+-- One roll at a time: a running roll blocks the rest (the finish
+-- chain re-runs this). Returns "raidroll" / false.
+function M.AutoRaidRollNext()
   local items = Z.LootWindow and Z.LootWindow.items or {}
   for i = 1, Z.Util.ArrayCount(items) do
     local it = items[i]
     if it and not it.coin and not it.ignored and it.source ~= "sim" then
+      if Z.AutoRoll and Z.AutoRoll.MaybeAutoRaidRoll
+          and Z.AutoRoll.MaybeAutoRaidRoll(it.itemID) then
+        return "raidroll"
+      end
+    end
+  end
+  return false
+end
+
+-- Next pending auto step after an auto resolution (or on open):
+-- category auto-raid-roll first (open-order parity), then remembered
+-- actions. At most one roll starts; instant awards chain inside
+-- ApplyRemembered. Returns truthy when anything auto-ran.
+function M.AutoNext()
+  if M.AutoRaidRollNext() then return "raidroll" end
+  return M.ApplyRemembered()
+end
+
+-- Would this row auto-resolve on open WITHOUT any chat? True for
+-- remembered entries (raid-roll or award) and enabled category
+-- trash — ML only, no roll open (mirrors the MaybeAutoRaidRoll /
+-- ApplyRemembered guards, so only what WILL auto-run is hidden).
+function M.AutoSilentOnOpen(itemID)
+  if not (Z.SRSecurity and Z.SRSecurity.AmML
+      and Z.SRSecurity.AmML()) then
+    return false
+  end
+  if M.roll then return false end
+  if M.lootOpen == false then return false end
+  if M.RememberedGet(itemID) then return true end
+  if Z.AutoRoll and Z.AutoRoll.CategoryFor and Z.AutoRoll.RaidRollFor then
+    local cat = Z.AutoRoll.CategoryFor(itemID)
+    if cat and Z.AutoRoll.RaidRollFor(cat) then return true end
+  end
+  return false
+end
+
+-- Remembered auto-action on open (Setup Remembered list). Instant
+-- awards ALL apply (quiet — no chat per award); at most one
+-- raid-roll starts (quiet — no chat), the rest wait for the finish
+-- chain (AutoNext). Guards: live rows only (sim rows never apply),
+-- corpse actually open, same award/handoff guards as a manual
+-- award, same starter guards as the bar button. Returns "raidroll"
+-- (a roll started) / "awarded <last name>" / false.
+-- Headless-testable through the same stubs the bar paths use
+-- (lootOpen + roll state, no frame).
+function M.ApplyRemembered()
+  local items = Z.LootWindow and Z.LootWindow.items or {}
+  -- Instant awards first: every remembered award applies (the done
+  -- set guarantees termination even when rows persist); then one
+  -- raid-roll at most (a running roll blocks the rest).
+  local awarded = nil
+  local done = {}
+  while true do
+    local found, entry = nil, nil
+    for i = 1, Z.Util.ArrayCount(items) do
+      local it = items[i]
+      if it and not it.coin and not it.ignored and it.source ~= "sim"
+          and not done[it.itemID] then
+        local e = M.RememberedGet(it.itemID)
+        if e and e.mode == "award" and e.name and e.name ~= "" then
+          found, entry = it, e
+          break
+        end
+      end
+    end
+    if not found then break end
+    done[found.itemID] = true
+    if M.AwardDirect
+        and M.AwardDirect(found.itemID, entry.name, "loot", nil, true) then
+      awarded = entry.name
+      items = Z.LootWindow and Z.LootWindow.items or {}
+    else
+      break -- refusal (frozen, corpse gone): keep the row, stop
+    end
+  end
+  for i = 1, Z.Util.ArrayCount(items) do
+    local it = items[i]
+    if it and not it.coin and not it.ignored and it.source ~= "sim" then
       local e = M.RememberedGet(it.itemID)
-      if e then
-        if e.mode == "raidroll" then
-          if M.StartRaidRoll and M.StartRaidRoll(it.itemID) then
-            return "raidroll"
-          end
-        elseif e.mode == "award" and e.name and e.name ~= "" then
-          if M.AwardDirect
-              and M.AwardDirect(it.itemID, e.name, "loot") then
-            return "awarded " .. tostring(e.name)
-          end
+      if e and e.mode == "raidroll" then
+        if M.StartRaidRoll and M.StartRaidRoll(it.itemID, true) then
+          return "raidroll"
         end
       end
     end
   end
+  if awarded then return "awarded " .. tostring(awarded) end
   return false
 end
 

@@ -50,6 +50,16 @@ ZugLoot.Comm = {
   SayGroup = function() end,
   Say = function() end,
 }
+-- Wire taps: the real Comm (dofile below) sends group chat here and
+-- addon traffic here. Auto (quiet) actions must emit NOTHING on
+-- either; manual paths still speak (pinned in test_chat_routing).
+local sentChat, sentAddon = {}, {}
+SendChatMessage = function(msg, chan)
+  table.insert(sentChat, { msg = tostring(msg), chan = tostring(chan) })
+end
+SendAddonMessage = function(prefix, msg, channel)
+  table.insert(sentAddon, tostring(msg))
+end
 GetNumRaidMembers = function() return 3 end
 GetRaidRosterInfo = function(i) return ({"SoloPlayer", "Aaa", "Bbb"})[i] end
 UnitName = function(u) return "SoloPlayer" end
@@ -75,9 +85,11 @@ local function reset()
   ZugLoot.DB = { sheet = makeSheet(), remembered = {} }
   ML.roll = nil
   ML.lastRound = nil
+  ML.lastRaidRollCast = nil
   ML.lootOpen = true
   LW.Clear()
   printed = {}
+  sentChat, sentAddon = {}, {}
 end
 
 -- 1. Store primitives: raidroll stores, award needs a name, junk refuses.
@@ -253,6 +265,94 @@ ZugLoot.MainWindow.RefreshRememberedList(0)
 eq(rows[1].shown, false, "empty list hides row 1")
 ZugLoot.MainWindow.setupBtns = sbKeep
 ZugLoot.MainWindow.rememberSel = selKeep
+
+-- 8. Auto actions are fully silent in chat: no start/verdict/award
+-- lines, no ROLL_REQ, no roster broadcast — but the item still rolls
+-- and assigns. Manual raid-rolls still announce (control).
+reset()
+ZugLoot.DB.sheet = makeSheet()
+ML.RememberedSet(1001, true, "raidroll", nil, "item:1001")
+LW.SetItems({ { itemID = 1001, link = "item:1001", quality = 4, slot = 1 } }, "loot")
+eq(ML.ApplyRemembered(), "raidroll", "remembered raid-roll auto-starts")
+local auto = ML.roll
+ok(auto ~= nil and auto.mode == "RAIDROLL", "auto roll live")
+ok(auto.quiet, "auto roll flagged quiet")
+eq(#sentChat, 0, "auto raid-roll start: no chat")
+eq(#sentAddon, 0, "auto raid-roll start: no ROLL_REQ")
+eq(ML.lastRaidRollCast, nil, "quiet roll leaves the roster cache alone")
+-- The ML's own dice still feed intake; the finish awards at once with
+-- no verdict/award chat — but the addon AWARD still syncs (data).
+-- (RAIDROLL intake finishes inline: the roll resolves on the dice.)
+ML.IntakeChatRoll("SoloPlayer rolls 2 (1-3)")
+eq(ML.roll, nil, "quiet raid-roll resolves on intake")
+eq(ML.lastRound, nil, "quiet award consumes the stamp")
+eq(#sentChat, 0, "quiet finish: no verdict/award chat")
+eq(#sentAddon, 1, "quiet finish: addon AWARD still syncs")
+ok(string.find(sentAddon[1], "AWARD:1001:Aaa", 1, true) ~= nil, "sync names the award")
+eq(LW.Find(1001), nil, "auto-awarded row leaves the list")
+ok(ZugLoot.SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "quiet award won-marks")
+-- Manual raid-roll control: same flow announces (start + numbering).
+reset()
+ZugLoot.DB.sheet = makeSheet()
+LW.SetItems({ { itemID = 1001, link = "item:1001", quality = 4, slot = 1 } }, "loot")
+ok(ML.StartRaidRoll(1001) ~= nil, "manual raid-roll starts")
+ok(not ML.roll.quiet, "manual roll not quiet")
+ok(#sentChat >= 2, "manual raid-roll announces (start + roster)")
+local sawStart = false
+for i = 1, #sentChat do
+  if string.find(sentChat[i].msg, "Raid rolling", 1, true) then sawStart = true end
+end
+ok(sawStart, "manual raid-roll names the item")
+ok(#sentAddon >= 1, "manual raid-roll sends ROLL_REQ")
+ok(ML.lastRaidRollCast ~= nil, "manual roll caches the roster")
+ML.roll = nil
+
+-- 9. Remembered awards chain silently: every stored award applies
+-- with zero chat; unremembered rows stay for the ML.
+reset()
+ZugLoot.DB.sheet = makeSheet()
+ML.RememberedSet(1001, true, "award", "Aaa", "item:1001")
+ML.RememberedSet(1002, true, "award", "Bbb", "item:1002")
+LW.SetItems({
+  { itemID = 1001, link = "item:1001", quality = 4, slot = 1 },
+  { itemID = 1002, link = "item:1002", quality = 4, slot = 2 },
+  { itemID = 1003, link = "item:1003", quality = 4, slot = 3 },
+}, "loot")
+eq(ML.ApplyRemembered(), "awarded Bbb", "chained remembered awards apply")
+eq(#sentChat, 0, "chained auto-awards: no chat")
+eq(LW.Find(1001), nil, "first auto-award leaves")
+eq(LW.Find(1002), nil, "second auto-award leaves")
+ok(LW.Find(1003) ~= nil, "unremembered row stays for the ML")
+ok(ZugLoot.SRData.HasWon(ZugLoot.DB.sheet, 1001, "Aaa"), "chained award won-marks (1)")
+ok(ZugLoot.SRData.HasWon(ZugLoot.DB.sheet, 1002, "Bbb"), "chained award won-marks (2)")
+-- Awards-before-raid-roll: a stored award applies even when a
+-- remembered raid-roll is also pending (instant first), and the
+-- raid-roll then starts quietly.
+reset()
+ZugLoot.DB.sheet = makeSheet()
+ML.RememberedSet(1001, true, "award", "Aaa", "item:1001")
+ML.RememberedSet(1002, true, "raidroll", nil, "item:1002")
+LW.SetItems({
+  { itemID = 1002, link = "item:1002", quality = 4, slot = 2 },
+  { itemID = 1001, link = "item:1001", quality = 4, slot = 1 },
+}, "loot")
+eq(ML.ApplyRemembered(), "raidroll", "award applies, then raid-roll starts")
+eq(#sentChat, 0, "mixed auto actions: no chat")
+eq(LW.Find(1001), nil, "stored award applied")
+ok(ML.roll ~= nil and ML.roll.quiet, "remembered raid-roll quiet")
+ML.roll = nil
+-- AutoSilentOnOpen pins: remembered entries and enabled categories
+-- read silent; plain rows, open rolls, and non-ML clients do not.
+reset()
+ML.RememberedSet(1001, true, "raidroll", nil, "item:1001")
+ok(ML.AutoSilentOnOpen(1001), "remembered row reads auto-silent")
+ok(not ML.AutoSilentOnOpen(1003), "plain row not auto-silent")
+ML.roll = { itemID = 9999, mode = "SR", rolls = {} }
+ok(not ML.AutoSilentOnOpen(1001), "open roll blocks auto-silence")
+ML.roll = nil
+ZugLoot.SRSecurity.AmML = function() return false end
+ok(not ML.AutoSilentOnOpen(1001), "non-ML never auto-silent")
+ZugLoot.SRSecurity.AmML = function() return true end
 
 -- 7. Mid normal-roll tick arms (nothing storable yet); the award
 -- converges it to the winner. Tied award windows offer nothing.

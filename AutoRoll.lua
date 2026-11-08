@@ -6,6 +6,8 @@
 -- This addon is master-loot only:
 -- there are no group-roll votes here, so each trash category is
 -- either OFF or auto raid-rolled by the ML when the corpse opens.
+-- All auto handling is SILENT (no chat lines at all — the item just
+-- assigns by rule; the drop call skips auto-handled items too).
 -- All off by default; every category toggles OFF <-> RAID-ROLL
 -- from the Setup tab.
 ZugLoot = ZugLoot or {}
@@ -160,10 +162,11 @@ function M.CategoryFor(itemID)
 end
 -- Auto raid-roll (loot-opened path): when a corpse opens holding a
 -- trash item whose category is enabled, the ML raid-rolls it straight
--- away — no clicks, no award window (the roll distributes at once).
--- Guards: ML only, no roll already running, corpse actually open.
--- Returns true when a roll started, false/nil otherwise.
--- Headless-safe: without the ML/loot APIs nothing starts.
+-- away — no clicks, no award window (the roll distributes at once),
+-- no chat at all (quiet: no start/verdict/award lines, no ROLL_REQ,
+-- no roster broadcast). Guards: ML only, no roll already running,
+-- corpse actually open. Returns true when a roll started, false/nil
+-- otherwise. Headless-safe: without the ML/loot APIs nothing starts.
 function M.MaybeAutoRaidRoll(itemID)
   itemID = Z.Util and Z.Util.ItemID(itemID) or tonumber(itemID)
   if not itemID then return nil end
@@ -177,7 +180,7 @@ function M.MaybeAutoRaidRoll(itemID)
     return nil
   end
   if MLUI.lootOpen == false then return nil end
-  local roll = MLUI.StartRaidRoll(itemID)
+  local roll = MLUI.StartRaidRoll(itemID, true)
   if roll then return true end
   return nil
 end

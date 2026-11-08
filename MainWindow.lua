@@ -1,7 +1,10 @@
 -- ZugLoot/MainWindow.lua
 -- Big tabbed window, Aegis-SBR-inspired skin (flat dark palette, 1px hairlines,
 -- tab rail with gold underline, scroll body). In-game only.
--- Tabs: Sheet (default) | Raids | Pysanka | Members | Setup.
+-- Tabs: Sheet (default) | Raids | Members | Setup.
+-- (Pysanka hidden: M.PYSANKA_TAB_ENABLED = false below. The module,
+-- renderer, and data layer stay loaded — flip the boolean to restore
+-- the tab.)
 --
 -- Sheet tab: one card per item (sorted by itemID). Each card has:
 --   - icon button (hover = full GameTooltip item details, click = link in chat)
@@ -127,6 +130,12 @@ local QUALITY_RGB = {
   [5] = { 1.0, 0.5, 0.0 },
 }
 
+-- Pysanka tab kill-switch (load-time): false hides the tab from the
+-- rail, bodies, and selection — the window stays
+-- Sheet | Raids | Members | Setup. The Pysanka module, renderer, and
+-- stored sheet keep working underneath (Core still backfills the
+-- data, tests still cover it), so setting this true restores the tab.
+M.PYSANKA_TAB_ENABLED = false
 local TABS = {
   { key = "sheet",    label = "SHEET" },
   { key = "raids",    label = "RAIDS" },
@@ -134,6 +143,25 @@ local TABS = {
   { key = "versions", label = "MEMBERS" },
   { key = "setup",    label = "SETUP" },
 }
+-- Tab entries actually shown: TABS minus the disabled Pysanka tab.
+-- Every rail/body/selection loop below reads this, never TABS.
+local function VisibleTabs()
+  local out = {}
+  for i = 1, Z.Util.ArrayCount(TABS) do
+    local td = TABS[i]
+    if td.key ~= "pysanka" or M.PYSANKA_TAB_ENABLED then
+      table.insert(out, td)
+    end
+  end
+  return out
+end
+-- Selection guard: hidden tabs can never become active (stray
+-- SelectTab/Show calls stay on the current tab instead of stranding
+-- the window on a body that was never built).
+function M.TabEnabled(key)
+  if key == "pysanka" and not M.PYSANKA_TAB_ENABLED then return false end
+  return true
+end
 
 local function hairline(parent, y1, x1, x2)
   local t = parent:CreateTexture(nil, "ARTWORK")
@@ -729,7 +757,8 @@ end
 
 -------------------------------------------------------------------------------
 -- (ROLLS tab removed: DropLog.Show() prints to chat. Kept out of the
--- tab rail so the window stays Sheet | Raids | Pysanka | Members | Setup.)
+-- tab rail so the window stays Sheet | Raids | Members | Setup.
+-- Pysanka likewise hidden behind M.PYSANKA_TAB_ENABLED above.)
 -------------------------------------------------------------------------------
 -- Pysanka tab: raid-setup sheet (invitation word + buff / tank-healer /
 -- debuff / puller / kill-order assignments). Player fields are clickable
@@ -1879,7 +1908,7 @@ function M.RenderSetup()
       end)
       local catTip = (Z.AutoRoll and Z.AutoRoll.CATEGORY_LABEL and Z.AutoRoll.CATEGORY_LABEL[cat]) or cat
       Tip(nb, "Auto raid-roll " .. catTip, "Raid-roll " .. catTip .. " when the corpse opens.",
-        "OFF: listed for manual rolling. RAID-ROLL: the ML raid-rolls it straight away.")
+        "OFF: listed for manual rolling. RAID-ROLL: the ML raid-rolls it straight away, silently (no chat).")
       nzBtns[cat] = nb
     end
     local b12 = gridSingle(panel, -PAD_TOP - contentH + SMALL_H, SMALL_H)
@@ -2233,7 +2262,7 @@ function M.Refresh()
       tb.ul:Hide()
     end
   end
-  for _, td in ipairs(TABS) do
+  for _, td in ipairs(VisibleTabs()) do
     local bd = bodies[td.key]
     if bd then
       if td.key == M.activeTab then bd.sf:Show() else bd.sf:Hide() end
@@ -2245,9 +2274,19 @@ function M.Refresh()
 end
 
 function M.SelectTab(key)
+  if not M.TabEnabled(key) then return end
   if key ~= M.activeTab then M.ClosePysankaPicker() end
   M.activeTab = key
   M.Refresh()
+end
+
+-- Test hook: rail button keys in left-to-right order.
+function M.DebugTabKeys()
+  local out = {}
+  for i = 1, Z.Util.ArrayCount(tabBtns) do
+    table.insert(out, tabBtns[i].key)
+  end
+  return out
 end
 
 -- Test hook (used by tests/mockrun.lua): slider visibility per tab.
@@ -2784,10 +2823,11 @@ function M.Build()
     "Requires Nampower.")
   hairline(f, -56, 14, -14)
   -- tab rail (Aegis BuildSpecTabs pattern: buttons + gold underline)
-  local n = Z.Util.ArrayCount(TABS)
+  local visTabs = VisibleTabs()
+  local n = Z.Util.ArrayCount(visTabs)
   local w = math.floor((winW - 100) / n)
   for i = 1, n do
-    local td = TABS[i]
+    local td = visTabs[i]
     local b = CreateFrame("Button", "ZugLootTab_" .. td.key, f)
     b:SetWidth(w) b:SetHeight(24)
     b:SetPoint("TOPLEFT", f, "TOPLEFT", 16 + (i - 1) * w, -60)
@@ -2810,8 +2850,8 @@ function M.Build()
     table.insert(tabBtns, { key = k, fs = fs, ul = ul })
   end
   hairline(f, -86, 14, -14)
-  -- bodies
-  for _, td in ipairs(TABS) do MakeBody(f, td.key) end
+  -- bodies (visible tabs only — hidden tabs are never built)
+  for _, td in ipairs(VisibleTabs()) do MakeBody(f, td.key) end
   -- footer (no Close button: X sits top-right next to the other X).
   hairline(f, -(winH - 30), 14, -14)
   M.frame = f
@@ -2821,7 +2861,7 @@ end
 function M.Show(tab)
   M.EnsureSize()
   if not M.frame then M.Build() end
-  if tab then M.activeTab = tab end
+  if tab and M.TabEnabled(tab) then M.activeTab = tab end
   if M.activeTab == "versions" and Z.VersionGrid then Z.VersionGrid.Request() end
   M.Refresh()
   M.frame:Show()

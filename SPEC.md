@@ -167,6 +167,12 @@ Sheet = {
   ML's 1-N roll counts, first number only). The item goes straight out
   on the number — no award window. Finish/award reuse the
   normal path, including the award line.
+  AUTO raid-rolls (Setup Automation categories, remembered raid-roll
+  entries) are fully silent: no start/verdict/award lines, no
+  `ROLL_REQ`, no roster broadcast — the dice still roll and the item
+  still assigns, and the drop call skips auto-handled items too, so a
+  trash corpse produces zero chat. After each auto assignment the next
+  pending auto action runs (multi-trash corpses fully auto-handle).
 - Sand (loot `Sand` button, Hourglass Sand item 19183 only): the
   lowest-ledger raider takes the row via the master-loot handoff, no
   roll, no award window. Ledger `Z.DB.sand` (`{ [name] = count }`)
@@ -619,7 +625,9 @@ the item); extra rolls ignored with notice. Auto-close timer configurable
   remembers this row's decision per itemID (`Z.DB.remembered`, backfilled
   by `InitDB`). Two decisions: **raid-roll** (the row raid-rolls on open)
   or **award to a specific player** (the next drop direct-awards to them
-  on open, no roll started).
+  on open, no roll started). Both apply SILENTLY (no chat lines) and
+  chain: every stored award applies at once, at most one raid-roll
+  starts, and finishing it advances the next pending auto action.
 - The checkbox always stores something real: ticking a bare row stores
   raid-roll (the fallback); the decision otherwise resolves by phase
   (pick = holder award, award window = top winner, raid-roll in progress

@@ -1164,4 +1164,61 @@ GetLootMethod = nil
 GetMasterLootCandidate = nil
 ZugLoot.SRSecurity.LootMethod = nil
 
+-- 18. Auto raid-roll is silent end to end: the drop call skips
+-- auto-handled items, the roll starts quietly (no start/verdict/award
+-- chat, no ROLL_REQ, roster cache untouched), and the finish assigns
+-- the item with the addon AWARD still syncing.
+resetHarness()
+dofile("AutoRoll.lua")
+grouping = "raid"
+ZugLoot.DB.autoRaidRoll = { ZG = true }
+ML.lastRaidRollCast = nil -- stale cache from the §17 broadcast pins
+GetNumRaidMembers = function() return 3 end
+GetRaidRosterInfo = function(i)
+  return ({ "Pysanka", "Aaa", "Bbb" })[i]
+end
+UnitName = function() return "SoloPlayer" end
+lootSlots = {
+  { link = "item:19698:0:0:0", quality = 4 }, -- ZG coin: auto raid-rolls
+  { link = "item:1001:0:0:0", quality = 4 }, -- epic: manual roll
+}
+printed = {}
+sent = {}
+ML.OnLootOpened()
+-- Drop call: only the manual epic announced, coin excluded.
+local sawHead18, numbered18, coinLine = false, 0, false
+for i = 1, #sent do
+  if string.find(sent[i].msg, "dropped 1 item", 1, true) then sawHead18 = true end
+  if string.find(sent[i].msg, "^%d+%. ") then numbered18 = numbered18 + 1 end
+  if string.find(sent[i].msg, "19698", 1, true) then coinLine = true end
+end
+ok(sawHead18, "drop call counts only the manual item")
+eq(numbered18, 1, "drop call names only the manual item")
+ok(not coinLine, "auto coin never announced on open")
+-- Auto chain: the coin raid-rolled quietly straight off the corpse.
+local auto = ML.roll
+ok(auto ~= nil and auto.mode == "RAIDROLL", "auto raid-roll opens")
+ok(auto.quiet, "auto roll flagged quiet")
+for i = 1, #sent do
+  ok(string.find(sent[i].msg, "Raid rolling", 1, true) == nil, "no raid-roll start line")
+  ok(string.find(sent[i].msg, "[1]:", 1, true) == nil, "no roster broadcast")
+end
+eq(ML.lastRaidRollCast, nil, "quiet roll leaves the roster cache alone")
+-- ML dice resolve + assign, still with zero chat.
+ML.IntakeChatRoll("SoloPlayer rolls 2 (1-3)")
+eq(ML.roll, nil, "auto roll resolves on intake")
+ok(LW.Find(19698) == nil, "auto coin assigned off the corpse")
+ok(LW.Find(1001) ~= nil, "manual epic stays listed")
+for i = 1, #sent do
+  ok(string.find(sent[i].msg, "wins ", 1, true) == nil, "no award chat")
+  ok(string.find(sent[i].msg, "won by ", 1, true) == nil, "no verdict chat")
+end
+ZugLoot.AutoRoll = nil
+GetRaidRosterInfo = function() return nil end
+GetNumRaidMembers = function()
+  if grouping == "raid" then return 10 end
+  return 0
+end
+grouping = "solo"
+
 return T

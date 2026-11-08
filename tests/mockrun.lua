@@ -473,6 +473,11 @@ Z.MainWindow.Refresh();
 -- Pysanka tab: renders, invitation word defaults to invite, player
 -- fields + edits are present, writes land in the model, and the picker
 -- opens merged sheet + roster choices on click.
+-- Pysanka tab hidden (M.PYSANKA_TAB_ENABLED = false): the
+-- implementation stays, but the UI is off. These blocks run only
+-- when the tab is re-enabled — they pin the implementation, not
+-- the (hidden) rail.
+if Z.MainWindow.PYSANKA_TAB_ENABLED then
 Z.MainWindow.SelectTab("pysanka");
 local pyVals = Z.MainWindow.DebugPysankaValues();
 assert(pyVals and pyVals["invite"] == "invite", "invite defaults to invite, got: " .. tostring(pyVals and pyVals["invite"]));
@@ -523,6 +528,7 @@ assert((drop.flevel or 0) > 5, "picker level above window, got: " .. tostring(dr
 tankClick();
 assert(Z.MainWindow.DebugPysankaPicker().open == false, "second click closes picker");
 assert(Z.MainWindow.DebugPysankaDrop() == nil, "picker frame torn down");
+end
 -- Import sheet paints ABOVE the main window (DIALOG strata + higher
 -- level), or it slides under the window and cannot be clicked.
 Z.SRImport.ShowPaste();
@@ -601,6 +607,7 @@ assert(hintX.coord ~= nil and hintX.coord[4] == Z.SRImport.HINT_TEX_BOTTOM,
   "hint image cropped to live content");
 print("import compact input box OK");
 -- Kill order renders the 8 real raid-target icons in order.
+if Z.MainWindow.PYSANKA_TAB_ENABLED then
 Z.MainWindow.SelectTab("sheet");
 Z.MainWindow.SelectTab("pysanka");
 local ko = Z.MainWindow.DebugPysankaKillOrder();
@@ -622,11 +629,13 @@ local koApi = Z.MainWindow.DebugPysankaKillOrder();
 assert(koApi and koApi[1].via == "api", "client raid-icon API used when present");
 SetRaidTargetIconTexture = nil;
 print("pysanka tab OK");
+end
 -- Pysanka layout invariant: no widget row may start inside the one
 -- above — every header->field step must clear the widget heights
 -- (GameFontNormal ~14px, small ~12px, fields 20px). Catches the
 -- header/field overlap family (buff columns over row 1-2, tank heads
 -- over Skull, kill-order icons over their header).
+if Z.MainWindow.PYSANKA_TAB_ENABLED then
 Z.MainWindow.SelectTab("sheet");
 Z.MainWindow.SelectTab("pysanka");
 local pyRows = Z.MainWindow.DebugPysankaRowYs and Z.MainWindow.DebugPysankaRowYs();
@@ -641,7 +650,8 @@ if pyRows then
   clear(pyRows.koHead, 14, pyRows.koIcons, "kill-order header clears icons");
   print("pysanka layout invariant OK");
 end
-for _,tab in ipairs({"sheet","raids","pysanka","versions","setup"}) do
+end
+for _,tab in ipairs({"sheet","raids","versions","setup"}) do
   Z.MainWindow.SelectTab(tab);
   print("rendered tab:", tab);
 end
@@ -922,11 +932,25 @@ st5.autoRaidRoll.ZG:GetScript("OnClick")();
 assert(Z.DB.autoRaidRoll.ZG == nil, "click again disables");
 Z.DB.autoRaidRoll = {};
 print("setup automation OK");
+-- Pysanka tab hidden: no rail button, no body, selection is a safe
+-- no-op (stays on the current tab). Flip M.PYSANKA_TAB_ENABLED to
+-- restore it (mockrun pysanka blocks above re-run then).
+assert(Z.MainWindow.PYSANKA_TAB_ENABLED == false, "pysanka tab off by default");
+local tabKeys = Z.MainWindow.DebugTabKeys();
+assert(Z.Util.ArrayCount(tabKeys) == 4, "four tabs on the rail, got " .. tostring(Z.Util.ArrayCount(tabKeys)));
+for _, k in ipairs(tabKeys) do assert(k ~= "pysanka", "no pysanka rail button") end;
+assert(tabKeys[1] == "sheet" and tabKeys[2] == "raids"
+  and tabKeys[3] == "versions" and tabKeys[4] == "setup", "rail order Sheet | Raids | Members | Setup");
+Z.MainWindow.SelectTab("sheet");
+Z.MainWindow.SelectTab("pysanka");
+assert(Z.MainWindow.activeTab == "sheet", "hidden tab selection stays put");
+assert(Z.MainWindow.DebugSliderState().pysanka == nil, "hidden tab builds no body");
+print("pysanka hidden OK");
 print("setup loot toggles OK");
 -- scrollbar invariant, checked on every tab: a visible slider may only belong
 -- to the active tab. Hidden tabs must never paint a thumb (the old bug left
 -- stale sliders from hidden tabs over the live list).
-for _,tab in ipairs({"sheet","raids","pysanka","versions","setup"}) do
+for _,tab in ipairs({"sheet","raids","versions","setup"}) do
   Z.MainWindow.SelectTab(tab);
   local sliderState = Z.MainWindow.DebugSliderState();
   for other, _vis in pairs(sliderState) do
