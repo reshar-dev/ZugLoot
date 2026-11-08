@@ -110,6 +110,14 @@ local builtHex = string.match(LW.BuildLink(17063, "Thunderfury", 5) or "", "^(|c
 ok(builtHex ~= nil, "built link has color prefix")
 eq(LW.BuildLink(17063, "Thunderfury", 5), builtHex .. "|Hitem:17063:0:0:0|h[Thunderfury]|h|r", "built link shape")
 eq(LW.BuildLink(8, nil, 4), nil, "no name, no link")
+-- QualityHex: single color source. nil/zero quality is "unknown" and
+-- stays white (never grey); known qualities consult the client API.
+-- (Client GetItemQualityColor(0) is grey — the list default and the
+-- ChatQuality "unknown" contract must not render as poor-quality.)
+eq(LW.QualityHex(nil), "|cFFFFFFFF", "nil quality is white")
+eq(LW.QualityHex(0), "|cFFFFFFFF", "zero quality is white")
+eq(LW.BuildLink(9999, "Mystery", nil),
+  "|cFFFFFFFF|Hitem:9999:0:0:0|h[Mystery]|h|r", "built link defaults to white")
 -- ResolveItemInfo upgrades bare ids to full links when the name is known.
 -- (Cache cold: stub misses 17063, so no full link comes from GetItemInfo.)
 local _bn, bl = LW.ResolveItemInfo(17063, "item:17063:0:0:0", 5, nil, "Thunderfury")
